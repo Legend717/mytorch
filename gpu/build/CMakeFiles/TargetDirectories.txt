@@ -1,0 +1,4 @@
+/mnt/c/Users/preju/Desktop/tmp/code/gpu/build/CMakeFiles/minitorch_gpu.dir
+/mnt/c/Users/preju/Desktop/tmp/code/gpu/build/CMakeFiles/main.dir
+/mnt/c/Users/preju/Desktop/tmp/code/gpu/build/CMakeFiles/edit_cache.dir
+/mnt/c/Users/preju/Desktop/tmp/code/gpu/build/CMakeFiles/rebuild_cache.dir
