@@ -24,4 +24,4 @@ cmake ..
 make
 
 # 4. 运行示例程序
-./train_example
+./main
