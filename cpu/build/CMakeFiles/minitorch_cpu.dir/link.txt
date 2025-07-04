@@ -1,0 +1,2 @@
+/usr/bin/ar qc libminitorch_cpu.a CMakeFiles/minitorch_cpu.dir/src/core/tensor.cpp.o CMakeFiles/minitorch_cpu.dir/src/core/function.cpp.o CMakeFiles/minitorch_cpu.dir/src/nn/linear.cpp.o CMakeFiles/minitorch_cpu.dir/src/nn/activations.cpp.o CMakeFiles/minitorch_cpu.dir/src/nn/sequential.cpp.o CMakeFiles/minitorch_cpu.dir/src/nn/conv.cpp.o CMakeFiles/minitorch_cpu.dir/src/nn/pool.cpp.o CMakeFiles/minitorch_cpu.dir/src/nn/flatten.cpp.o CMakeFiles/minitorch_cpu.dir/src/optim/sgd.cpp.o
+/usr/bin/ranlib libminitorch_cpu.a
