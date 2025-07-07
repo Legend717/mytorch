@@ -1,6 +1,29 @@
+# CUDA编译文件
 *.i
 *.ii
 *.gpu
 *.ptx
 *.cubin
 *.fatbin
+
+# CMake构建目录
+/build/
+/cpu/build/
+/gpu/build/
+
+# CMake生成文件(排除Makefile)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+.make
+*.ninja
+*.a
+*.so
+*.dll
+*.exe
+
+# 编译中间文件
+*.o
+*.obj
+*.out
