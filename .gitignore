@@ -6,6 +6,9 @@
 *.cubin
 *.fatbin
 
+# vscode编译文件
+.vscode
+
 # CMake构建目录
 /build/
 /cpu/build/
