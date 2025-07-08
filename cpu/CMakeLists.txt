@@ -25,6 +25,7 @@ add_library(minitorch_cpu STATIC
     src/nn/pool.cpp
     src/nn/flatten.cpp
     src/optim/sgd.cpp
+    src/nn/flash-attn.cpp
 )
 
 add_executable(main examples/luotest.cpp)

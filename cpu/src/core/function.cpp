@@ -400,46 +400,71 @@ std::shared_ptr<Tensor> numpy_to_tensor(const py::array_t<float>& arr) {
     return std::make_shared<Tensor>(std::move(data), std::move(shape));
 }
 
+std::shared_ptr<Tensor> FlashAttenFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    if (inputs.size() < 3) {
+        throw std::runtime_error("FlashAttentionFunc requires at least 3 inputs: Q, K, V");
+    }
 
-// std::shared_ptr<Tensor> FlashAttentionFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
-    // if (inputs.size() < 5) {
-    //     throw std::runtime_error("FlashAttentionFunc requires at least 5 inputs: Q, K, V, O, L.");
-    // }
-    // auto& Q = inputs[0];
-    // auto& K = inputs[1];
-    // auto& V = inputs[2];
-    // auto& O = inputs[3]; // 以下都是反向传播需要的tensor， O是输出
-    // auto& L = inputs[4];  // L是中间结果
+    try {
+        py::gil_scoped_acquire gil;  // ⬅️ 保证持有 GIL
+
+        auto& Q = inputs[0];
+        auto& K = inputs[1];
+        auto& V = inputs[2];
+
+        auto O = Tensor::zeros(Q->shape(), false);
+        auto L = Tensor::zeros({Q->shape()[0] * Q->shape()[1], Q->shape()[2]}, false);
+
+        // 只初始化一次 Python 模块和函数
+        py::module_ sys = py::module_::import("sys");
+        sys.attr("path").attr("insert")(0, "/home/rogers/Documents/project/mytorch/cpu/src/nn/");
+        py::module_ attn = py::module_::import("flash_attn");
+
+        // Tensor 转 numpy
+        py::object py_q = tensor_to_numpy(Q);
+        py::object py_k = tensor_to_numpy(K);
+        py::object py_v = tensor_to_numpy(V);
+        py::object py_o = tensor_to_numpy(O);
+        py::object py_l = tensor_to_numpy(L);
+
+        // Python 参数
+        py::bool_ _causal = this->_causal;
+        py::float_ _sm_scale = this->_sm_scale;
+
+        // 调用 Python 函数
+        printf("%d\n", 436);
+        py::object py_result = attn.attr("attention")(py_q, py_k, py_v, py_o, py_l, _causal, _sm_scale);
+
+        // 解析返回值
+        py::tuple py_tuple = py_result.cast<py::tuple>();
+        py::tuple py_grid = py_tuple[2];
+        py::int_ py_block_dmodel = py_tuple[3];
+
+        // 保存 ctx 信息用于反向传播
+        this->_saved_inputs.push_back(O);
+        this->_saved_inputs.push_back(L);
+        this->_block_dmodel = py_block_dmodel.cast<int>();
+        this->_grid[0] = py_grid[0].cast<int>();
+        this->_grid[1] = py_grid[1].cast<int>();
+        this->_grid[2] = py_grid[2].cast<int>();
+
+        return O;
+    } catch (const py::error_already_set& e) {
+        throw std::runtime_error("Error in FlashAttentionFunc: " + std::string(e.what()));
+    }
+}
 
 
-    // static py::scoped_interpreter guard{}; // 只初始化一次
-    // static py::object py_mod = py::module_::import("python_module");
-    // static py::object py_func = py_mod.attr("flash_attention_forward");
+// flash-attn.cpp
 
-    // // 假设有 tensor_to_numpy 工具函数
-    // py::object py_q = tensor_to_numpy(Q);
-    // py::object py_k = tensor_to_numpy(K);
-    // py::object py_v = tensor_to_numpy(V);
-    // py::object py_o = tensor_to_numpy(O);
-    // py::object py_l = tensor_to_numpy(L);
-    // py::bool_ _causal = this->_causal; // 转为 Python 布尔值
-    // py::float_ _sm_scale = this->_sm_scale; // 转为 Python 浮点
+std::vector<std::shared_ptr<Tensor>> FlashAttenFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    // 占位实现：返回与输入形状一致的零梯度张量
+    std::vector<std::shared_ptr<Tensor>> grads;
 
-    // // 调用 Python
-    // py::object py_result = py_func(py_q, py_k, py_v, py_o, py_l, _causal, _sm_scale);
+    for (const auto& saved_input : this->_saved_inputs) {
+        auto zero_grad = Tensor::zeros(saved_input->shape(), false);
+        grads.push_back(zero_grad);
+    }
 
-    // // 拆包 output, ctx_dict
-    // py::tuple py_tuple = py_result.cast<py::tuple>();
-    // py::tuple py_grid = py_tuple[2];
-    // py::int_ py_block_dmodel = py_tuple[3];
-
-    // //since zero copy, we dont need to convert the data back to tensor type
-
-    // this->_saved_q = Q; // 保存 Q, K, V 用于反向传播
-    // this->_saved_k = K;
-    // this->_saved_v = V;
-    // this->_saved_o = O; // 保存输出 O
-    // this->_saved_l = L; // 保存中间结果 L
-
-    // return O;
-// }
+    return grads;
+}
