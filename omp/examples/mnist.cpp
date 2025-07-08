@@ -26,6 +26,8 @@ std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std:
 float calculate_accuracy(const std::shared_ptr<Tensor>& pred, const std::shared_ptr<Tensor>& target);
 int main() {
     std::cout << "--- MiniTorchCPU MNIST 训练示例 ---" << std::endl;
+    MyRand::set_global_random_seed(42);
+    omp_set_num_threads(6);
 
     // 超参数
     const size_t INPUT_FEATURES = 784;    // 28x28
@@ -33,11 +35,9 @@ int main() {
     const size_t OUTPUT_CLASSES = 10;
     const float LEARNING_RATE = 0.01f;
     const int EPOCHS = 2;
-    const size_t BATCH_SIZE = 64;
+    const size_t BATCH_SIZE = 128;
     const std::string MNIST_DATA_PATH = "../data"; // 数据路径
-
-    omp_set_num_threads(6);
-
+    
     // 全连接神经网络
     auto model = std::make_shared<nn::Sequential>(
         std::vector<std::shared_ptr<nn::Module>>{
@@ -72,7 +72,7 @@ int main() {
         // 每个周期开始时打乱数据
         std::vector<size_t> indices(num_samples);
         std::iota(indices.begin(), indices.end(), 0);
-        std::shuffle(indices.begin(), indices.end(), std::mt19937{42});
+        std::shuffle(indices.begin(), indices.end(), MyRand::global_rand_generater);
 
         float epoch_loss = 0;
         float epoch_accuracy = 0;

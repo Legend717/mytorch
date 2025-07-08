@@ -22,7 +22,9 @@ std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std:
 
 int main() {
     std::cout << "--- Linear Test ---" << std::endl;
-
+    
+    MyRand::set_global_random_seed(42);
+    
     // 1. 定义超参数
     const size_t SEQ_LEN = 1000;     // 输入序列长度
     const size_t PRED_LEN = 200;    // 预测长度

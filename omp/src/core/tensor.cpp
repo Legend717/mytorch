@@ -1,5 +1,6 @@
 #include "core/tensor.h"
 #include "core/function.h"
+#include "rand/rand.h"
 #include <stdexcept>
 #include <numeric>
 #include <algorithm>
@@ -10,7 +11,6 @@
 #include <memory>
 #include <string>
 #include <functional>
-#include <random>
 
 // 构造函数
 Tensor::Tensor(const std::vector<float>& data, std::vector<size_t>shape, bool requires_grad) : _data(std::make_shared<std::vector<float>>(data)), _shape(shape), _requires_grad(requires_grad), _grad(nullptr), _ctx(nullptr) {
@@ -48,13 +48,11 @@ std::shared_ptr<Tensor> Tensor::randn(const std::vector<size_t>& shape, bool req
     for(size_t dim : shape) tot_size *= dim;
     std::vector<float> data(tot_size);
 
-    // 随机数函数并不是线程安全的，在此暂时不进行并行
-    std::random_device rd;
-    std::mt19937 gen(rd());
     std::normal_distribution<> d(0, 1);
-
+        
+    // 随机数函数并不是线程安全的，在此暂时不进行并行
     for(size_t i = 0; i < tot_size; i++) {
-        data[i] = d(gen);
+        data[i] = d(MyRand::global_rand_generater);
     }
     return create(data, shape, requires_grad);
 }
