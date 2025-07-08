@@ -32,7 +32,7 @@ int main() {
     const size_t IMG_WIDTH = 28;
     const size_t NUM_CLASSES = 10;
     const float LEARNING_RATE = 0.001f;
-    const int EPOCHS = 50;
+    const int EPOCHS = 100;
 
     // 2. 定义CNN模型 (类LeNet结构)
     auto model = std::make_shared<nn::Sequential>(
