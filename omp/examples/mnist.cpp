@@ -1,10 +1,11 @@
 #include <iostream>
 #include <memory>
 #include <vector>
-#include <numeric>   // for std::iota
-#include <algorithm> // for std::shuffle
+#include <numeric>
+#include <algorithm> 
 #include <random>    // for std::mt19937
-#include <chrono> // 引入时间库
+#include <chrono> 
+#include <omp.h>
 
 #include "core/tensor.h"
 #include "nn/module.h"
@@ -12,7 +13,8 @@
 #include "nn/activations.h"
 #include "nn/sequential.h"
 #include "optim/sgd.h"
-#include "loader/mnist_loader.h" // 包含新的加载器
+#include "loader/mnist_loader.h" 
+
 
 // 辅助函数：均方误差损失
 std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std::shared_ptr<Tensor>& target) {
@@ -33,6 +35,8 @@ int main() {
     const int EPOCHS = 2;
     const size_t BATCH_SIZE = 64;
     const std::string MNIST_DATA_PATH = "../data"; // 数据路径
+
+    omp_set_num_threads(6);
 
     // 全连接神经网络
     auto model = std::make_shared<nn::Sequential>(
@@ -104,7 +108,7 @@ int main() {
 
     auto end = std::chrono::high_resolution_clock::now();
     auto time = std::chrono::duration_cast<std::chrono::seconds>(end -start).count();
-    std::cout<<"用时："<<time<<"m"<<std::endl;
+    std::cout<<"用时："<<time<<"s"<<std::endl;
 
     return 0;
 }
