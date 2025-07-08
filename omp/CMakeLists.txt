@@ -12,7 +12,7 @@ find_package(OpenMP REQUIRED)
 include_directories(include)
 
 # 定义我们的框架库
-add_library(minitorch_cpu STATIC
+add_library(mytorch STATIC
     src/core/tensor.cpp
     src/core/function.cpp
     src/nn/linear.cpp
@@ -22,17 +22,18 @@ add_library(minitorch_cpu STATIC
     src/nn/pool.cpp
     src/nn/flatten.cpp
     src/optim/sgd.cpp
-    
 )
 
 # 将OpenMP链接到框架库
-target_link_libraries(minitorch_cpu PUBLIC OpenMP::OpenMP_CXX)
+target_link_libraries(mytorch PUBLIC OpenMP::OpenMP_CXX)
 
-# 定义我们的示例可执行文件
+# 可执行文件
 add_executable(linear_test examples/linear_test.cpp)
+add_executable(mnist_test examples/mnist.cpp)
 
 # 将框架库链接到示例程序
-target_link_libraries(linear_test minitorch_cpu)
+target_link_libraries(linear_test mytorch)
+target_link_libraries(mnist_test mytorch)
 
 # 方便在 IDE 中看到头文件
-target_include_directories(minitorch_cpu PUBLIC include)
+target_include_directories(mytorch PUBLIC include)

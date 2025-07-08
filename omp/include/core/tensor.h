@@ -50,7 +50,7 @@ public:
 
     // 一些其他函数
     std::shared_ptr<Tensor> reshape(const std::vector<size_t>& new_shape);
-
+    std::shared_ptr<Tensor> slice (size_t start, size_t end) const;
 private:
     // 存储数据
     std::shared_ptr<std::vector<float>> _data;

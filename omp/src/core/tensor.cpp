@@ -6,8 +6,6 @@
 #include <iostream>
 #include <set>
 
-#pragma once
-
 #include <vector>
 #include <memory>
 #include <string>
@@ -165,6 +163,24 @@ std::shared_ptr<Tensor> Tensor::reshape(const std::vector<size_t>& new_shape) {
     return func->apply({shared_from_this()});
 }
 
+std::shared_ptr<Tensor> Tensor::slice(size_t start, size_t end) const{
+    /*在Tensor中的第一个维度切出从start到end的部分*/
+    if(_shape.size() < 1 || start >= end || end > _shape[0]){
+        throw std::runtime_error("切片参数无效");
+    }
+    size_t feature_size = 1;
+    for(size_t  i = 1; i < _shape.size(); ++i){
+        feature_size *= _shape[i];
+    }
+    auto start_sl = _data->begin() + start*feature_size;
+    auto end_sl = _data->begin() + end*feature_size;
+    std::vector<float> sliced_data(start_sl, end_sl);
+    std::vector<size_t> new_shape = _shape;
+    new_shape[0] = end -start;
+    
+    return create(sliced_data, new_shape, _requires_grad);
+}
+
 // 运算符重载
 std::shared_ptr<Tensor> Tensor::add(const std::shared_ptr<Tensor>& other) { 
     auto func = std::make_shared<Add>();
@@ -182,7 +198,9 @@ std::shared_ptr<Tensor> Tensor::mul(const std::shared_ptr<Tensor>& other) {
 }
 
 std::shared_ptr<Tensor> Tensor::div(const std::shared_ptr<Tensor>& other) { 
-    throw std::runtime_error("Div not implemented :("); 
+    if(other->data().size() != 1) throw std::runtime_error("除法仅支持标量");
+    auto inverse = create({1.0f/ other->data()[0]}, {1});
+    return this->mul(inverse);
 }
 
 std::shared_ptr<Tensor> Tensor::matmul(const std::shared_ptr<Tensor>& other) { 
