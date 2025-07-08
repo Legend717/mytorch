@@ -1,4 +1,0 @@
-/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/minitorch_cpu.dir
-/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/main.dir
-/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/edit_cache.dir
-/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/rebuild_cache.dir

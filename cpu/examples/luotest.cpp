@@ -11,7 +11,6 @@
 #include "nn/conv.h"
 #include "nn/pool.h"
 #include "nn/flatten.h"
-#include "nn/flash-attn.h"
 #include "optim/sgd.h"
 
 int main() {
