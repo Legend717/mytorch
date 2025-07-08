@@ -29,4 +29,3 @@ cmake_install.cmake
 # 编译中间文件
 *.o
 *.obj
-*.out

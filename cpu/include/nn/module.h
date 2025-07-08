@@ -3,7 +3,7 @@
 #include "core/tensor.h"
 #include <vector>
 #include <memory>
-
+#include <stdexcept>
 namespace nn {
 
 class Module {
@@ -12,7 +12,9 @@ public:
 
     // 前向传播
     virtual std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) = 0;
-
+    virtual std::shared_ptr<Tensor> forward(std::vector<std::shared_ptr<Tensor>> inputs){
+        throw std::runtime_error("该Module子类没有实现forward(std::vector<std::shared_ptr<Tensor>> inputs)方法");
+    }
     // 获取所有可训练参数
     virtual std::vector<std::shared_ptr<Tensor>> parameters() {
         return {};

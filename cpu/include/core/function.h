@@ -1,7 +1,12 @@
 #pragma once
-
+#include <pybind11/embed.h>
+#include <pybind11/stl.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>  // ✅ 必须加这个头文件
 #include <vector>
 #include <memory>
+#include "tensor.h"  // Include the header file where Tensor is defined
+namespace py = pybind11;
 
 class Tensor; // 前向声明
 
@@ -88,5 +93,27 @@ public:
     ReshapeFunc(const std::vector<size_t>& new_shape) : _new_shape(new_shape) {}
 protected:
     std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) override;
+    std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
+};
+
+py::array_t<float> tensor_to_numpy(const std::shared_ptr<Tensor>& t);
+
+std::shared_ptr<Tensor> numpy_to_tensor(const py::array_t<float>& arr);
+
+// --- Flash Attention ---
+
+class FlashAttenFunc : public Function {
+private:
+    bool _causal;  //other parameters can be fetched from inputs(Tensor class)
+    float _sm_scale;
+    int _block_dmodel; // 用于存储 block_dmodel
+    int _grid[3]; // 用于存储 grid
+
+public:
+    FlashAttenFunc(bool causal = false, float sm_scale = 1.0f)
+        : _causal(causal), _sm_scale(sm_scale) {}
+protected:
+    std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) override;
+ 
     std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
 };

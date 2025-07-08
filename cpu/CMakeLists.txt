@@ -1,14 +1,20 @@
 cmake_minimum_required(VERSION 3.14)
 project(MiniTorchCPU)
 
-# 设置 C++ 标准为 C++17
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 添加头文件目录，以便 #include "core/tensor.h" 能够工作
-include_directories(include)
+# ===== 手动设置 Python3 路径（来自 Conda） =====
+set(Python3_EXECUTABLE "/home/rogers/miniconda3/envs/pytorch/bin/python")
+set(Python3_INCLUDE_DIR "/home/rogers/miniconda3/envs/pytorch/include/python3.12")
+set(Python3_LIBRARY "/home/rogers/miniconda3/envs/pytorch/lib/libpython3.12.so")
 
-# 定义我们的框架库
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
+find_package(pybind11 REQUIRED)
+
+include_directories(include)
+include_directories(${Python3_INCLUDE_DIRS})
+
 add_library(minitorch_cpu STATIC
     src/core/tensor.cpp
     src/core/function.cpp
@@ -19,14 +25,15 @@ add_library(minitorch_cpu STATIC
     src/nn/pool.cpp
     src/nn/flatten.cpp
     src/optim/sgd.cpp
-    
+    src/nn/flash-attn.cpp
 )
 
-# 定义我们的示例可执行文件
-add_executable(main examples/main.cpp)
+add_executable(main examples/luotest.cpp)
 
-# 将框架库链接到示例程序
-target_link_libraries(main minitorch_cpu)
+target_link_libraries(main
+    minitorch_cpu
+    pybind11::embed
+    ${Python3_LIBRARIES}
+)
 
-# 方便在 IDE 中看到头文件
 target_include_directories(minitorch_cpu PUBLIC include)
