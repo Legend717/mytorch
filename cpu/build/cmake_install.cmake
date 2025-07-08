@@ -1,4 +1,4 @@
-# Install script for directory: /mnt/c/Users/preju/Desktop/tmp/code/cpu
+# Install script for directory: /home/rogers/Documents/project/mytorch/cpu
 
 # Set the install prefix
 if(NOT DEFINED CMAKE_INSTALL_PREFIX)
@@ -50,5 +50,5 @@ endif()
 
 string(REPLACE ";" "\n" CMAKE_INSTALL_MANIFEST_CONTENT
        "${CMAKE_INSTALL_MANIFEST_FILES}")
-file(WRITE "/mnt/c/Users/preju/Desktop/tmp/code/cpu/build/${CMAKE_INSTALL_MANIFEST}"
+file(WRITE "/home/rogers/Documents/project/mytorch/cpu/build/${CMAKE_INSTALL_MANIFEST}"
      "${CMAKE_INSTALL_MANIFEST_CONTENT}")

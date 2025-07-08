@@ -1,4 +1,4 @@
-/mnt/c/Users/preju/Desktop/tmp/code/cpu/build/CMakeFiles/minitorch_cpu.dir
-/mnt/c/Users/preju/Desktop/tmp/code/cpu/build/CMakeFiles/main.dir
-/mnt/c/Users/preju/Desktop/tmp/code/cpu/build/CMakeFiles/edit_cache.dir
-/mnt/c/Users/preju/Desktop/tmp/code/cpu/build/CMakeFiles/rebuild_cache.dir
+/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/minitorch_cpu.dir
+/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/main.dir
+/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/edit_cache.dir
+/home/rogers/Documents/project/mytorch/cpu/build/CMakeFiles/rebuild_cache.dir

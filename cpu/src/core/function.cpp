@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <numeric>
 
+
 // --- 基类实现 ---
 std::shared_ptr<Tensor> Function::apply(const std::vector<std::shared_ptr<Tensor>>& inputs) {
     _saved_inputs = inputs;
@@ -374,3 +375,71 @@ std::vector<std::shared_ptr<Tensor>> ReshapeFunc::_backward(const std::shared_pt
     auto original_shape = _saved_inputs[0]->shape();
     return { grad_output->reshape(original_shape) };
 }
+
+// --- FlashAttentionFunc ---
+
+namespace py = pybind11;
+
+//TODO: tensoe to numpy 和 numpy to tensor 的转换函数需要实现:
+// 假设 Tensor::data() 返回 const std::vector<float>&，Tensor::shape() 返回 const std::vector<size_t>&
+// 转为 numpy（zero-copy）
+py::array_t<float> tensor_to_numpy(const std::shared_ptr<Tensor>& t) {
+    std::vector<ssize_t> shape(t->shape().begin(), t->shape().end());
+    return py::array_t<float>(
+        shape,
+        t->data().data()
+    );
+}
+
+// 从 numpy 转为 Tensor（copy）
+std::shared_ptr<Tensor> numpy_to_tensor(const py::array_t<float>& arr) {
+    auto buf = arr.request();
+    const float* ptr = static_cast<float*>(buf.ptr);
+    std::vector<float> data(ptr, ptr + buf.size);
+    std::vector<size_t> shape(buf.shape.begin(), buf.shape.end());
+    return std::make_shared<Tensor>(std::move(data), std::move(shape));
+}
+
+
+// std::shared_ptr<Tensor> FlashAttentionFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    // if (inputs.size() < 5) {
+    //     throw std::runtime_error("FlashAttentionFunc requires at least 5 inputs: Q, K, V, O, L.");
+    // }
+    // auto& Q = inputs[0];
+    // auto& K = inputs[1];
+    // auto& V = inputs[2];
+    // auto& O = inputs[3]; // 以下都是反向传播需要的tensor， O是输出
+    // auto& L = inputs[4];  // L是中间结果
+
+
+    // static py::scoped_interpreter guard{}; // 只初始化一次
+    // static py::object py_mod = py::module_::import("python_module");
+    // static py::object py_func = py_mod.attr("flash_attention_forward");
+
+    // // 假设有 tensor_to_numpy 工具函数
+    // py::object py_q = tensor_to_numpy(Q);
+    // py::object py_k = tensor_to_numpy(K);
+    // py::object py_v = tensor_to_numpy(V);
+    // py::object py_o = tensor_to_numpy(O);
+    // py::object py_l = tensor_to_numpy(L);
+    // py::bool_ _causal = this->_causal; // 转为 Python 布尔值
+    // py::float_ _sm_scale = this->_sm_scale; // 转为 Python 浮点
+
+    // // 调用 Python
+    // py::object py_result = py_func(py_q, py_k, py_v, py_o, py_l, _causal, _sm_scale);
+
+    // // 拆包 output, ctx_dict
+    // py::tuple py_tuple = py_result.cast<py::tuple>();
+    // py::tuple py_grid = py_tuple[2];
+    // py::int_ py_block_dmodel = py_tuple[3];
+
+    // //since zero copy, we dont need to convert the data back to tensor type
+
+    // this->_saved_q = Q; // 保存 Q, K, V 用于反向传播
+    // this->_saved_k = K;
+    // this->_saved_v = V;
+    // this->_saved_o = O; // 保存输出 O
+    // this->_saved_l = L; // 保存中间结果 L
+
+    // return O;
+// }

@@ -1,1 +1,1 @@
-/usr/bin/c++ CMakeFiles/main.dir/examples/main.cpp.o -o main  libminitorch_cpu.a 
+/usr/bin/c++ CMakeFiles/main.dir/examples/luotest.cpp.o -o main  -Wl,-rpath,/home/rogers/miniconda3/envs/pytorch/lib libminitorch_cpu.a /home/rogers/miniconda3/envs/pytorch/lib/libpython3.12.so /home/rogers/miniconda3/envs/pytorch/lib/libpython3.12.so 
