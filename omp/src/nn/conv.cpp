@@ -18,11 +18,7 @@ Conv2D::Conv2D(size_t in_channels, size_t out_channels, size_t kernel_size, size
         val *= stdv;
     }
 
-    // 偏置初始化为0
-    std::vector<size_t> bias_shape = {1, out_channels, 1, 1};
-    _bias = Tensor::zeros(bias_shape, true);
 }
-
 std::shared_ptr<Tensor> Conv2D::forward(std::shared_ptr<Tensor> input) {
     // 1. 调用底层的卷积运算
     auto conv_func = std::make_shared<Conv2DFunc>(_stride, _padding);
@@ -31,7 +27,6 @@ std::shared_ptr<Tensor> Conv2D::forward(std::shared_ptr<Tensor> input) {
     // 2. 添加偏置 (需要广播)
     // 我们的 Add function 尚不支持4D广播，这里简化处理
     auto output_data = output->get_shared_data();
-    const auto& bias_data = _bias->data();
 
     size_t N = output->shape()[0];
     size_t C_out = output->shape()[1];
@@ -42,7 +37,7 @@ std::shared_ptr<Tensor> Conv2D::forward(std::shared_ptr<Tensor> input) {
         for(size_t c = 0; c < C_out; ++c) {
             for(size_t h = 0; h < H_out; ++h) {
                 for(size_t w = 0; w < W_out; ++w) {
-                    (*output_data)[n * (C_out*H_out*W_out) + c * (H_out*W_out) + h * W_out + w] += bias_data[c];
+                    (*output_data)[n * (C_out*H_out*W_out) + c * (H_out*W_out) + h * W_out + w];
                 }
             }
         }
@@ -54,7 +49,7 @@ std::shared_ptr<Tensor> Conv2D::forward(std::shared_ptr<Tensor> input) {
 }
 
 std::vector<std::shared_ptr<Tensor>> Conv2D::parameters() {
-    return {_weight, _bias};
+    return {_weight};
 }
 
 } // namespace nn

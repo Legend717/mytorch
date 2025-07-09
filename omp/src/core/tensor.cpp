@@ -1,5 +1,6 @@
 #include "core/tensor.h"
 #include "core/function.h"
+#include "rand/rand.h"
 #include <stdexcept>
 #include <numeric>
 #include <algorithm>
@@ -10,7 +11,6 @@
 #include <memory>
 #include <string>
 #include <functional>
-#include <random>
 
 // 构造函数
 Tensor::Tensor(const std::vector<float>& data, std::vector<size_t>shape, bool requires_grad) : _data(std::make_shared<std::vector<float>>(data)), _shape(shape), _requires_grad(requires_grad), _grad(nullptr), _ctx(nullptr) {
@@ -48,13 +48,11 @@ std::shared_ptr<Tensor> Tensor::randn(const std::vector<size_t>& shape, bool req
     for(size_t dim : shape) tot_size *= dim;
     std::vector<float> data(tot_size);
 
-    // 随机数函数并不是线程安全的，在此暂时不进行并行
-    std::random_device rd;
-    std::mt19937 gen(rd());
     std::normal_distribution<> d(0, 1);
-
+        
+    // 随机数函数并不是线程安全的，在此暂时不进行并行
     for(size_t i = 0; i < tot_size; i++) {
-        data[i] = d(gen);
+        data[i] = d(MyRand::global_rand_generater);
     }
     return create(data, shape, requires_grad);
 }
@@ -134,8 +132,16 @@ void Tensor::backward() {
                     }
                 }
             }
+            t->ctx()->release_saved_inputs();
         }
     }
+    
+    // // 再次遍历整个计算图，统一释放所有节点保存的中间变量
+    // for (auto& t : topo_order) {
+    //     if (t->ctx()) {
+    //         t->ctx()->release_saved_inputs();
+    //     }
+    // }
 
 }
 
@@ -217,9 +223,3 @@ std::shared_ptr<Tensor> Tensor::relu() {
     auto func = std::make_shared<ReLUFunc>();
     return func->apply({shared_from_this()});
 }
-
-// 方便使用运算符
-std::shared_ptr<Tensor> operator+(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) { return a->add(b); }
-std::shared_ptr<Tensor> operator-(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) { return a->sub(b); }
-std::shared_ptr<Tensor> operator*(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) { return a->mul(b); }
-

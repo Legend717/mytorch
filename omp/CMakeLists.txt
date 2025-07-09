@@ -29,11 +29,13 @@ target_link_libraries(mytorch PUBLIC OpenMP::OpenMP_CXX)
 
 # 可执行文件
 add_executable(linear_test examples/linear_test.cpp)
-add_executable(mnist_test examples/mnist.cpp)
+add_executable(mnist_test examples/mnist_test.cpp)
+add_executable(cnn_test examples/cnn_test.cpp)
 
 # 将框架库链接到示例程序
 target_link_libraries(linear_test mytorch)
 target_link_libraries(mnist_test mytorch)
+target_link_libraries(cnn_test mytorch)
 
 # 方便在 IDE 中看到头文件
 target_include_directories(mytorch PUBLIC include)

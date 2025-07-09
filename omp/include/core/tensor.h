@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 #include <functional>
-#include <random>
+#include "rand/rand.h"
 
 class Function; // 先声明，用于声明Tensor的friend
 
