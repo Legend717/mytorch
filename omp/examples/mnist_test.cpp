@@ -34,7 +34,7 @@ int main() {
     const size_t HIDDEN_FEATURES = 32;
     const size_t OUTPUT_CLASSES = 10;
     const float LEARNING_RATE = 0.01f;
-    const int EPOCHS = 2;
+    const int EPOCHS = 10;
     const size_t BATCH_SIZE = 128;
     const std::string MNIST_DATA_PATH = "../data"; // 数据路径
     

@@ -22,7 +22,6 @@ Conv2D::Conv2D(size_t in_channels, size_t out_channels, size_t kernel_size, size
     std::vector<size_t> bias_shape = {1, out_channels, 1, 1};
     _bias = Tensor::zeros(bias_shape, true);
 }
-
 std::shared_ptr<Tensor> Conv2D::forward(std::shared_ptr<Tensor> input) {
     // 1. 调用底层的卷积运算
     auto conv_func = std::make_shared<Conv2DFunc>(_stride, _padding);

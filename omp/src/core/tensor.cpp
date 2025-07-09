@@ -215,9 +215,3 @@ std::shared_ptr<Tensor> Tensor::relu() {
     auto func = std::make_shared<ReLUFunc>();
     return func->apply({shared_from_this()});
 }
-
-// 方便使用运算符
-std::shared_ptr<Tensor> operator+(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) { return a->add(b); }
-std::shared_ptr<Tensor> operator-(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) { return a->sub(b); }
-std::shared_ptr<Tensor> operator*(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) { return a->mul(b); }
-
