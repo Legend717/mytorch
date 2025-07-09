@@ -12,7 +12,8 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(const std::shared_ptr<Tensor>& grad_output);
     
     std::vector<std::shared_ptr<Tensor>> _saved_inputs;
-
+    void release_saved_inputs(); 
+    
 protected:
     // 纯虚函数，由子类实现
     virtual std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) = 0;

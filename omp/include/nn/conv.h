@@ -7,7 +7,6 @@ namespace nn {
 class Conv2D : public Module {
 private:
     std::shared_ptr<Tensor> _weight;
-    std::shared_ptr<Tensor> _bias;
     size_t _stride;
     size_t _padding;
 

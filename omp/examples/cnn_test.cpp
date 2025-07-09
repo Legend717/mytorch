@@ -14,6 +14,7 @@
 #include "nn/flatten.h"
 #include "optim/sgd.h"
 #include "loader/mnist_loader.h"
+#include "omp.h"
 
 // 辅助函数：均方误差损失
 std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std::shared_ptr<Tensor>& target) {
@@ -28,7 +29,8 @@ float calculate_accuracy(const std::shared_ptr<Tensor>& pred, const std::shared_
 int main() {
     std::cout << "--- MiniTorchCPU CNN Training Example ---" << std::endl;
 
-    // 1. 定义超参数
+    // 定义超参数
+    omp_set_num_threads(6);
     const size_t BATCH_SIZE = 512;
     const size_t IN_CHANNELS = 1; // 灰度图
     const size_t IMG_HEIGHT = 28;
@@ -38,7 +40,7 @@ int main() {
     const int EPOCHS = 10;
     const std::string MNIST_DATA_PATH = "../data"; 
 
-    // 2. 定义CNN模型 (类LeNet结构)
+    // 定义CNN模型
     auto model = std::make_shared<nn::Sequential>(
         std::vector<std::shared_ptr<nn::Module>>{
             // 输入: [B, 1, 28, 28]

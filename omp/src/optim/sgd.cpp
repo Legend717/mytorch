@@ -11,7 +11,7 @@ void SGD::step() {
         if (p->grad()) {
             auto p_data = p->get_shared_data();
             auto g_data = p->grad()->get_shared_data();   
-            #pragma parallel for schedule(guided)  
+            #pragma omp parallel for schedule(guided)  
             for (size_t i = 0; i < p_data->size(); ++i) {
                 (*p_data)[i] -= _lr * (*g_data)[i];
             }

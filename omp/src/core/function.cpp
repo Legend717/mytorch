@@ -25,6 +25,10 @@ std::shared_ptr<Tensor> Function::apply(const std::vector<std::shared_ptr<Tensor
     return output;
 }
 
+void Function::release_saved_inputs() {
+    _saved_inputs.clear(); // <-- 清空保存的输入
+}
+
 // 加法
 std::vector<std::shared_ptr<Tensor>> Function::backward(const std::shared_ptr<Tensor>& grad_output) {
     return _backward(grad_output);

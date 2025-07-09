@@ -25,17 +25,17 @@ int main() {
     
     MyRand::set_global_random_seed(42);
     
-    // 1. 定义超参数
+    // 定义超参数
     const size_t SEQ_LEN = 1000;     // 输入序列长度
     const size_t PRED_LEN = 200;    // 预测长度
     const size_t HIDDEN_DIM = 640;  // 隐藏层维度（简化网络）
     const float LEARNING_RATE = 0.01f;
     const int EPOCHS = 100;
 
-    // 设置 OpenMP 并行数
+    // 设置OpenMP并行数
     omp_set_num_threads(8);
 
-    // 2. 简化模型结构
+    // 定义全连接层
     auto model = std::make_shared<nn::Sequential>(
         std::vector<std::shared_ptr<nn::Module>>{
             // std::make_shared<nn::Flatten>(), 
@@ -45,10 +45,10 @@ int main() {
         }
     );
 
-    // 3. 创建优化器
+    // 创建优化器
     optim::SGD optimizer(model->parameters(), LEARNING_RATE);
 
-    // 4. 创建实际数据
+    // 创建数据
     std::vector<float> X_train_data;
     std::vector<float> y_train_data;
     for (size_t i = 0; i < SEQ_LEN; i++) {

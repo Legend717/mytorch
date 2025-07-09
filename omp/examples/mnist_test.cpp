@@ -27,7 +27,7 @@ float calculate_accuracy(const std::shared_ptr<Tensor>& pred, const std::shared_
 int main() {
     std::cout << "--- MiniTorchCPU MNIST 训练示例 ---" << std::endl;
     MyRand::set_global_random_seed(42);
-    omp_set_num_threads(6);
+    omp_set_num_threads(1);
 
     // 超参数
     const size_t INPUT_FEATURES = 784;    // 28x28

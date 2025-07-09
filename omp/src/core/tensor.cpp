@@ -132,8 +132,16 @@ void Tensor::backward() {
                     }
                 }
             }
+            t->ctx()->release_saved_inputs();
         }
     }
+    
+    // // 再次遍历整个计算图，统一释放所有节点保存的中间变量
+    // for (auto& t : topo_order) {
+    //     if (t->ctx()) {
+    //         t->ctx()->release_saved_inputs();
+    //     }
+    // }
 
 }
 
