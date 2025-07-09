@@ -108,6 +108,8 @@ private:
     float _sm_scale;
     int _block_dmodel; // 用于存储 block_dmodel
     int _grid[3]; // 用于存储 grid
+    std::shared_ptr<Tensor> saved_o; // 保存 O 的张量
+    std::shared_ptr<Tensor> saved_l; // 保存 L 的张量
 
 public:
     FlashAttenFunc(bool causal = false, float sm_scale = 1.0f)
