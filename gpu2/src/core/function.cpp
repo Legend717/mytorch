@@ -161,8 +161,8 @@ std::shared_ptr<Tensor> MatMul::_forward(const std::vector<std::shared_ptr<Tenso
     if (inputs[0]->device() == Device::CUDA) {
         return matmul_forward_cuda(inputs[0], inputs[1]);
     }
-    const auto& a = inputs[0];
-    const auto& b = inputs[1];
+    const auto& a = inputs[0]->data_cpu();
+    const auto& b = inputs[1]->data_cpu();
     if (a->shape().size() != 2 || b->shape().size() != 2 || a->shape()[1] != b->shape()[0]) {
         throw std::runtime_error("矩阵乘法输入维度不匹配");
     }
@@ -174,7 +174,7 @@ std::shared_ptr<Tensor> MatMul::_forward(const std::vector<std::shared_ptr<Tenso
     for (size_t i = 0; i < M; ++i) {
         for (size_t j = 0; j < N; ++j) {
             for (size_t k = 0; k < K; ++k) {
-                result_data[i * N + j] += a->data_cpu()[i * K + k] * b->data_cpu()[k * N + j];
+                result_data[i * N + j] += a[i * K + k] * b[k * N + j];
             }
         }
     }
