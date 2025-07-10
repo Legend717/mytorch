@@ -3,25 +3,29 @@
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
 #include <cfloat>
+#include <stdexcept>
 
-// --- CUDA Error Checking Macro ---
-#define CUDA_CHECK(call) do { \
-    cudaError_t err = call; \
+#define CUDA_CHECK(call) \
+do { \
+    cudaError_t err = (call); \
     if (err != cudaSuccess) { \
-        fprintf(stderr, "CUDA Error in %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-        exit(1); \
+        fprintf(stderr, "CUDA error in file '%s' in line %i: %s\n", \
+                __FILE__, __LINE__, cudaGetErrorString(err)); \
+        exit(EXIT_FAILURE); \
     } \
-} while(0)
+} while (0)
 
-#define CUBLAS_CHECK(call) do { \
-    cublasStatus_t status = call; \
+#define CUBLAS_CHECK(call) \
+do { \
+    cublasStatus_t status = (call); \
     if (status != CUBLAS_STATUS_SUCCESS) { \
-        fprintf(stderr, "cuBLAS Error in %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
+        fprintf(stderr, "CUBLAS error in file '%s' in line %i: %d\n", \
+                __FILE__, __LINE__, status); \
+        exit(EXIT_FAILURE); \
     } \
-} while(0)
+} while (0)
 
-// --- SGD Update Kernel ---
+// SGD
 __global__ void sgd_update_kernel(float* params, const float* grads, float lr, size_t n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -37,8 +41,7 @@ void sgd_update_cuda(float* params, const float* grads, float lr, size_t n) {
     CUDA_CHECK(cudaPeekAtLastError());
 }
 
-// --- Kernels ---
-
+// kernel
 __global__ void add_kernel(float* out, const float* a, const float* b, size_t n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -79,7 +82,6 @@ __global__ void mul_kernel(float* out, const float* a, const float* b, size_t n)
     }
 }
 
-// ✨ NEW ✨: Kernel for multiplying a tensor by a scalar
 __global__ void mul_scalar_kernel(float* out, const float* a, float b, size_t n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < n) {
@@ -94,82 +96,6 @@ __global__ void relu_kernel(float* out, const float* a, size_t n) {
         out[idx] = a[idx] > 0 ? a[idx] : 0.0f;
     }
 }
-
-__global__ void im2col_kernel(const float* data_im, int channels, int height, int width,
-                              int kernel_h, int kernel_w, int pad_h, int pad_w,
-                              int stride_h, int stride_w,
-                              int height_col, int width_col, float* data_col) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    int num_kernels = channels * height_col * width_col;
-    if (index >= num_kernels) return;
-
-    int h_index = index / width_col;
-    int w_out = index % width_col;
-    int c_in = h_index / height_col;
-    int h_out = h_index % height_col;
-
-    int h_in_start = h_out * stride_h - pad_h;
-    int w_in_start = w_out * stride_w - pad_w;
-
-    int out_start_col = (c_in * height_col + h_out) * width_col + w_out;
-
-    for (int i = 0; i < kernel_h; ++i) {
-        for (int j = 0; j < kernel_w; ++j) {
-            int h_in = h_in_start + i;
-            int w_in = w_in_start + j;
-            int out_row = (i * kernel_w) + j;
-            
-            float val = 0;
-            if (h_in >= 0 && w_in >= 0 && h_in < height && w_in < width) {
-                val = data_im[(c_in * height + h_in) * width + w_in];
-            }
-            data_col[out_row * (height_col * width_col) + out_start_col] = val;
-        }
-    }
-}
-
-__global__ void max_pool_forward_kernel(const float* input, float* output, size_t* max_indices,
-                                        size_t N, size_t C, size_t H, size_t W,
-                                        size_t H_out, size_t W_out,
-                                        size_t kernel_size, size_t stride) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= N * C * H_out * W_out) {
-        return;
-    }
-
-    int w_out = index % W_out;
-    int h_out = (index / W_out) % H_out;
-    int c = (index / (W_out * H_out)) % C;
-    int n = index / (C * W_out * H_out);
-
-    int h_start = h_out * stride;
-    int w_start = w_out * stride;
-
-    float max_val = -FLT_MAX;
-    size_t max_idx = 0;
-
-    for (int i = 0; i < kernel_size; ++i) {
-        for (int j = 0; j < kernel_size; ++j) {
-            int h_in = h_start + i;
-            int w_in = w_start + j;
-            if (h_in < H && w_in < W) {
-                size_t input_idx = n * (C * H * W) + c * (H * W) + h_in * W + w_in;
-                float val = input[input_idx];
-                if (val > max_val) {
-                    max_val = val;
-                    max_idx = input_idx;
-                }
-            }
-        }
-    }
-    output[index] = max_val;
-    if (max_indices != nullptr) {
-        max_indices[index] = max_idx;
-    }
-}
-
-
-// --- Host-side launch functions ---
 
 std::shared_ptr<Tensor> add_forward_cuda(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) {
     if (a->size() < b->size()) {
@@ -206,7 +132,7 @@ std::shared_ptr<Tensor> add_forward_cuda(const std::shared_ptr<Tensor>& a, const
             static_cast<const float*>(b->data_ptr()),
             a_shape[0], a_shape[1]);
     } else {
-        throw std::runtime_error("CUDA Add broadcast shape not supported yet.");
+        throw std::runtime_error("GPU代码：还没支持这种shape的broadcast");
     }
     CUDA_CHECK(cudaPeekAtLastError());
     return output;
@@ -214,7 +140,7 @@ std::shared_ptr<Tensor> add_forward_cuda(const std::shared_ptr<Tensor>& a, const
 
 std::shared_ptr<Tensor> sub_forward_cuda(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) {
     if (a->shape() != b->shape()) {
-        throw std::runtime_error("CUDA Sub requires same shapes");
+        throw std::runtime_error("GPU减法：shape不匹配");
     }
     auto output = Tensor::zeros(a->shape(), false, Device::CUDA);
     size_t n = a->size();
@@ -229,7 +155,6 @@ std::shared_ptr<Tensor> sub_forward_cuda(const std::shared_ptr<Tensor>& a, const
     return output;
 }
 
-// ✨ MODIFIED: mul_forward_cuda now supports scalar multiplication
 std::shared_ptr<Tensor> mul_forward_cuda(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) {
     const std::shared_ptr<Tensor> *tensor_ptr, *scalar_ptr;
     if (a->size() == 1 && b->size() > 1) {
@@ -248,10 +173,10 @@ std::shared_ptr<Tensor> mul_forward_cuda(const std::shared_ptr<Tensor>& a, const
         CUDA_CHECK(cudaPeekAtLastError());
         return output;
     } else {
-        throw std::runtime_error("CUDA Mul requires same shapes or one scalar operand");
+        throw std::runtime_error("GPU乘法：shape不匹配");
     }
 
-    // Handle scalar multiplication
+    // 标量乘法
     auto output = Tensor::zeros((*tensor_ptr)->shape(), false, Device::CUDA);
     float scalar_val = (*scalar_ptr)->item(); // .item() copies from GPU to CPU
     size_t n = (*tensor_ptr)->size();
@@ -262,7 +187,6 @@ std::shared_ptr<Tensor> mul_forward_cuda(const std::shared_ptr<Tensor>& a, const
     CUDA_CHECK(cudaPeekAtLastError());
     return output;
 }
-
 
 std::shared_ptr<Tensor> matmul_forward_cuda(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b) {
     if (a->shape().size() != 2 || b->shape().size() != 2 || a->shape()[1] != b->shape()[0]) { throw std::runtime_error("MatMul shape mismatch."); }
@@ -303,136 +227,193 @@ std::shared_ptr<Tensor> reshape_forward_cuda(const std::shared_ptr<Tensor>& inpu
     return new_tensor;
 }
 
-std::shared_ptr<Tensor> conv2d_forward_cuda(const std::shared_ptr<Tensor>& input, const std::shared_ptr<Tensor>& weight, size_t stride, size_t padding) {
-    // 1. 获取输入、权重和输出的形状信息
-    size_t N = input->shape()[0], C = input->shape()[1], H = input->shape()[2], W = input->shape()[3];
-    size_t K_out = weight->shape()[0], K_in = weight->shape()[1], KH = weight->shape()[2], KW = weight->shape()[3];
-    if (C != K_in) { throw std::runtime_error("Conv2D input channels and weight channels mismatch."); }
-    size_t H_out = (H + 2 * padding - KH) / stride + 1;
-    size_t W_out = (W + 2 * padding - KW) / stride + 1;
+__global__ void reduce_sum_columns_kernel(float* out, const float* grad_output, size_t M, size_t N) {
+    // 每个线程块负责计算输出向量中的一个元素（一列的和）
+    int j = blockIdx.x; // 列索引
 
-    auto output = Tensor::zeros({N, K_out, H_out, W_out}, input->requires_grad(), Device::CUDA);
-
-    // 2. 为 im2col 的输出（中间矩阵）在GPU上分配内存
-    size_t col_buffer_rows = C * KH * KW;
-    size_t col_buffer_cols = H_out * W_out;
-    float* col_buffer_gpu;
-    CUDA_CHECK(cudaMalloc(&col_buffer_gpu, col_buffer_rows * col_buffer_cols * sizeof(float)));
-
-    // 3. 配置 GEMM (矩阵乘法) 参数
-    int M = K_out;
-    int K = col_buffer_rows;
-    int N_gemm = col_buffer_cols;
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
-    
-    cublasHandle_t handle;
-    CUBLAS_CHECK(cublasCreate(&handle));
-
-    // 4. 按批次（batch）处理每个图像
-    for(size_t i = 0; i < N; ++i) {
-        const float* input_im_ptr = static_cast<const float*>(input->data_ptr()) + i * (C * H * W);
-        
-        // 4.1. 调用 im2col 核函数，将输入图像转换为列矩阵
-        int num_kernels = C * H_out * W_out;
-        int threads_per_block = 512;
-        int blocks = (num_kernels + threads_per_block - 1) / threads_per_block;
-        im2col_kernel<<<blocks, threads_per_block>>>(input_im_ptr, C, H, W, KH, KW, padding, padding, stride, stride, H_out, W_out, col_buffer_gpu);
-        CUDA_CHECK(cudaPeekAtLastError());
-
-        float* output_im_ptr = static_cast<float*>(output->mutable_data_ptr()) + i * (K_out * H_out * W_out);
-
-        // 4.2. 使用 cuBLAS 执行矩阵乘法: output = weight * col_buffer
-        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
-                                 N_gemm, M, K,
-                                 &alpha,
-                                 col_buffer_gpu, N_gemm,
-                                 static_cast<const float*>(weight->data_ptr()), K,
-                                 &beta,
-                                 output_im_ptr, N_gemm));
-    }
-    
-    // 5. 清理资源
-    cublasDestroy(handle);
-    CUDA_CHECK(cudaFree(col_buffer_gpu));
-    
-    return output;
-}
-
-// --- Conv2D Backward Kernels ---
-
-// col2im Kernel: The inverse of im2col. It "scatters" the columns back into an image.
-__global__ void col2im_kernel(const float* data_col, int channels, int height, int width,
-                              int kernel_h, int kernel_w, int pad_h, int pad_w,
-                              int stride_h, int stride_w,
-                              int height_col, int width_col, float* data_im) {
-    // ... 获取形状信息 ...
-
-    auto grad_input = Tensor::zeros(input->shape(), false, Device::CUDA);
-    auto grad_weight = Tensor::zeros(weight->shape(), false, Device::CUDA);
-    auto grad_bias = Tensor::zeros({1, K_out, 1, 1}, false, Device::CUDA);
-
-    // ... 创建 cuBLAS 句柄和分配 col_buffer ...
-    
-    // --- 1. 计算 grad_weight ---
-    for (size_t i = 0; i < N; ++i) {
-        // ...
-        // 调用 im2col
-        im2col_kernel<<</*...*/>>>(/*...*/);
-        
-        // GEMM: grad_weight += col_buffer^T * grad_output
-        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, /*...*/));
-    }
-
-    // --- 2. 计算 grad_input ---
-    for (size_t i = 0; i < N; ++i) {
-        // ...
-        // GEMM: col_buffer = weight^T * grad_output
-        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, /*...*/));
-
-        // 调用 col2im 将梯度写回 grad_input
-        col2im_kernel<<</*...*/>>>(/*...*/);
-    }
-
-    // --- 3. 计算 grad_bias (通过Reduction实现) ---
-    sum_bias_kernel<<</*...*/>>>(/*...*/);
-
-    // ... 清理资源 ...
-
-    return {grad_input, grad_weight, grad_bias};
-}
-
-// Kernel to sum gradients for the bias term
-__global__ void sum_bias_kernel(const float* grad_output, float* bias_grad,
-                                size_t N, size_t K_out, size_t H_out, size_t W_out) {
-    extern __shared__ float sdata[];
-    int k = blockIdx.x; // Each block computes sum for one output channel k
-
-    float my_sum = 0;
-    for (int i = threadIdx.x; i < N * H_out * W_out; i += blockDim.x) {
-        int n = i / (H_out * W_out);
-        int h = (i / W_out) % H_out;
-        int w = i % W_out;
-        my_sum += grad_output[(n * K_out + k) * H_out * W_out + h * W_out + w];
-    }
-
-    sdata[threadIdx.x] = my_sum;
-    __syncthreads();
-
-    // Parallel reduction in shared memory
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (threadIdx.x < s) {
-            sdata[threadIdx.x] += sdata[threadIdx.x + s];
+    if (j < N) {
+        float sum = 0.0f;
+        // 遍历该列的所有行并累加
+        for (size_t i = 0; i < M; ++i) {
+            sum += grad_output[i * N + j];
         }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0) {
-        bias_grad[k] = sdata[0];
+        out[j] = sum;
     }
 }
 
+// 启动 reduce_sum_columns_kernel 的主机端函数
+std::shared_ptr<Tensor> reduce_sum_columns_cuda(const std::shared_ptr<Tensor>& grad_output, const std::vector<size_t>& target_shape) {
+    // 创建一个新的Tensor用于存储结果，确保它在GPU上
+    auto grad_b = Tensor::zeros(target_shape, false, Device::CUDA);
+    
+    const auto& grad_shape = grad_output->shape();
+    size_t M = grad_shape[0]; // batch_size
+    size_t N = grad_shape[1]; // features
 
-// --- Conv2D Backward Host-side Launcher ---
+    if (N == 0) return grad_b;
+
+    // 启动核函数：每个线程块计算一列的和，因此需要 N 个块
+    reduce_sum_columns_kernel<<<N, 1>>>(
+        static_cast<float*>(grad_b->mutable_data_ptr()),
+        static_cast<const float*>(grad_output->data_ptr()),
+        M,
+        N
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+
+    return grad_b;
+}
+
+// 新的包装函数：Add 运算在 CUDA 上的反向传播实现
+// 这个函数将被 C++ 代码调用
+std::shared_ptr<Tensor> add_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& b) {
+    // 创建一个新的Tensor用于存储广播后的梯度结果，确保它和 b 在同一设备(GPU)上
+    auto grad_b = Tensor::zeros(b->shape(), false, Device::CUDA);
+    
+    const auto& grad_shape = grad_output->shape();
+    size_t M = grad_shape[0]; // batch_size
+    size_t N = grad_shape[1]; // features
+
+    if (N == 0) return grad_b;
+
+    // 启动核函数：每个线程块计算一列的和，因此需要 N 个块
+    reduce_sum_columns_kernel<<<N, 1>>>(
+        static_cast<float*>(grad_b->mutable_data_ptr()),
+        static_cast<const float*>(grad_output->data_ptr()),
+        M,
+        N
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+
+    return grad_b;
+}
+
+// relu
+__global__ void relu_backward_kernel(float* grad_input, const float* grad_output, const float* input, size_t n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        grad_input[idx] = (input[idx] > 0) ? grad_output[idx] : 0.0f;
+    }
+}
+
+std::shared_ptr<Tensor> relu_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& input) {
+    auto grad_input = Tensor::zeros(input->shape(), false, Device::CUDA);
+    size_t n = input->size();
+    if (n == 0) return grad_input;
+
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+    relu_backward_kernel<<<blocks, threads>>>(
+        static_cast<float*>(grad_input->mutable_data_ptr()),
+        static_cast<const float*>(grad_output->data_ptr()),
+        static_cast<const float*>(input->data_ptr()),
+        n
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+    return grad_input;
+}
+
+
+//conv
+__global__ void im2col_kernel(const float* data_im, float* data_col,
+                            int N, int C, int H, int W,
+                            int K, int S, int P,
+                            int H_out, int W_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int col_size = C * K * K;
+    int num_kernels = N * H_out * W_out;
+
+    if (index < num_kernels * col_size) {
+        int col_idx = index % col_size;
+        int row_idx = index / col_size;
+
+        // 分解列索引以找到核的位置
+        int k_w = col_idx % K;
+        int k_h = (col_idx / K) % K;
+        int c_in = col_idx / (K * K);
+
+        // 分解行索引以找到输出像素的位置
+        int w_out = row_idx % W_out;
+        int h_out = (row_idx / W_out) % H_out;
+        int n = row_idx / (H_out * W_out);
+
+        // 计算输入图像的相应坐标
+        int h_in = h_out * S - P + k_h;
+        int w_in = w_out * S - P + k_w;
+
+        // 如果坐标在图像内，则将相应像素的值添加到输出列矩阵中
+        if (h_in >= 0 && h_in < H && w_in >= 0 && w_in < W) {
+            data_col[index] = data_im[(n * C + c_in) * H * W + h_in * W + w_in];
+        } else {
+            data_col[index] = 0.0f;
+        }
+    }
+}
+
+// 主机端函数，将输入图像转换为列矩阵，并使用 im2col_kernel 核函数进行处理
+std::shared_ptr<Tensor> im2col_cuda(const std::shared_ptr<Tensor>& input,
+                                  size_t K, size_t S, size_t P) {
+    const auto& shape = input->shape();
+    int N = shape[0];
+    int C = shape[1];
+    int H = shape[2];
+    int W = shape[3];
+
+    int H_out = (H + 2 * P - K) / S + 1;
+    int W_out = (W + 2 * P - K) / S + 1;
+
+    // 在GPU上创建输出列Tensor
+    auto col_tensor = Tensor::zeros({(size_t)C * K * K, (size_t)N * H_out * W_out}, false, Device::CUDA);
+    size_t n = col_tensor->size();
+    if (n == 0) return col_tensor;
+
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+
+    im2col_kernel<<<blocks, threads>>>(
+        static_cast<const float*>(input->data_ptr()),
+        static_cast<float*>(col_tensor->mutable_data_ptr()),
+        N, C, H, W, K, S, P, H_out, W_out
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+
+    return col_tensor;
+}
+
+
+__global__ void col2im_kernel(const float* data_col, float* data_im,
+                            int N, int C, int H, int W,
+                            int K, int S, int P,
+                            int H_out, int W_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int col_size = C * K * K;
+    int num_kernels = N * H_out * W_out;
+
+    if (index < num_kernels * col_size) {
+        // Calculate the position in the column matrix
+        int col_idx = index % col_size;
+        int row_idx = index / col_size;
+
+        // Decompose the column index to find kernel position
+        int k_w = col_idx % K;
+        int k_h = (col_idx / K) % K;
+        int c_in = col_idx / (K * K);
+
+        // Decompose the row index to find output pixel position
+        int w_out = row_idx % W_out;
+        int h_out = (row_idx / W_out) % H_out;
+        int n = row_idx / (H_out * W_out);
+
+        // Calculate the corresponding input coordinates
+        int h_in = h_out * S - P + k_h;
+        int w_in = w_out * S - P + k_w;
+
+        // Add to the image buffer if within bounds
+        if (h_in >= 0 && h_in < H && w_in >= 0 && w_in < W) {
+            atomicAdd(&data_im[(n * C + c_in) * H * W + h_in * W + w_in], data_col[index]);
+        }
+    }
+}
 
 std::vector<std::shared_ptr<Tensor>> conv2d_backward_cuda(
     const std::shared_ptr<Tensor>& grad_output,
@@ -440,174 +421,197 @@ std::vector<std::shared_ptr<Tensor>> conv2d_backward_cuda(
     const std::shared_ptr<Tensor>& weight,
     size_t stride, size_t padding
 ) {
-    // Get shapes
-    size_t N = input->shape()[0], C = input->shape()[1], H = input->shape()[2], W = input->shape()[3];
-    size_t K_out = weight->shape()[0], K_in = weight->shape()[1], KH = weight->shape()[2], KW = weight->shape()[3];
-    size_t H_out = grad_output->shape()[2], W_out = grad_output->shape()[3];
-
-    // Create gradient tensors to be returned
-    auto grad_input = Tensor::zeros(input->shape(), false, Device::CUDA);
-    auto grad_weight = Tensor::zeros(weight->shape(), false, Device::CUDA);
-    auto grad_bias = Tensor::zeros({1, K_out, 1, 1}, false, Device::CUDA);
-
-    cublasHandle_t handle;
-    CUBLAS_CHECK(cublasCreate(&handle));
-    const float alpha = 1.0f;
-    const float beta = 0.0f;
+    const auto& in_shape = input->shape();
+    const auto& w_shape = weight->shape();
+    const auto& grad_out_shape = grad_output->shape();
+    size_t N = in_shape[0], C_in = in_shape[1], H_in = in_shape[2], W_in = in_shape[3];
+    size_t C_out = w_shape[0], kH = w_shape[2], kW = w_shape[3];
+    size_t H_out = grad_out_shape[2], W_out = grad_out_shape[3];
 
     // --- 1. Calculate grad_weight ---
-    // grad_weight = im2col(input)^T * grad_output
-    size_t col_buffer_rows = C * KH * KW;
-    size_t col_buffer_cols = H_out * W_out;
-    float* col_buffer_gpu;
-    CUDA_CHECK(cudaMalloc(&col_buffer_gpu, col_buffer_rows * col_buffer_cols * sizeof(float)));
+    // This is a convolution between input and grad_output.
+    // grad_weight = matmul(grad_output_reshaped, input_col.T)
 
-    // We process one image at a time from the batch
-    for (size_t i = 0; i < N; ++i) {
-        const float* input_im_ptr = static_cast<const float*>(input->data_ptr()) + i * (C * H * W);
-        const float* grad_output_ptr = static_cast<const float*>(grad_output->data_ptr()) + i * (K_out * H_out * W_out);
+    // Reshape grad_output from (N, C_out, H_out, W_out) to (C_out, N * H_out * W_out)
+    auto grad_output_reshaped = grad_output->reshape({C_out, N * H_out * W_out});
 
-        // im2col for the input image
-        int num_kernels_im2col = C * H_out * W_out;
-        int threads_per_block_im2col = 512;
-        int blocks_im2col = (num_kernels_im2col + threads_per_block_im2col - 1) / threads_per_block_im2col;
-        im2col_kernel<<<blocks_im2col, threads_per_block_im2col>>>(input_im_ptr, C, H, W, KH, KW, padding, padding, stride, stride, H_out, W_out, col_buffer_gpu);
-        CUDA_CHECK(cudaPeekAtLastError());
+    // Get input as a column matrix
+    auto input_col = im2col_cuda(input, kH, stride, padding); // Shape: (C_in*kH*kW, N*H_out*W_out)
 
-        // GEMM: grad_weight += col_buffer^T * grad_output
-        // M = K_out, K = H_out * W_out, N = C*KH*KW
-        const float beta_add = 1.0f; // Use beta=1 to accumulate gradients over the batch
-        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                                 col_buffer_rows, K_out, col_buffer_cols,
-                                 &alpha,
-                                 col_buffer_gpu, col_buffer_cols,
-                                 grad_output_ptr, col_buffer_cols,
-                                 &beta_add,
-                                 static_cast<float*>(grad_weight->mutable_data_ptr()), col_buffer_rows));
-    }
+    // Transpose the input column matrix
+    auto input_col_t = input_col->transpose(); // Shape: (N*H_out*W_out, C_in*kH*kW)
+
+    // Perform GEMM
+    auto grad_weight_reshaped = grad_output_reshaped->matmul(input_col_t); // Shape: (C_out, C_in*kH*kW)
+
+    // Reshape back to the original weight shape
+    auto grad_weight = grad_weight_reshaped->reshape(w_shape);
 
 
     // --- 2. Calculate grad_input ---
-    // grad_input = col2im(weight^T * grad_output)
-    // First, GEMM: col_buffer = weight^T * grad_output
-    // M = C*KH*KW, K = K_out, N = H_out*W_out
-    int M_grad_in = C * KH * KW;
-    int K_grad_in = K_out;
-    int N_grad_in = H_out * W_out;
-    for (size_t i = 0; i < N; ++i) {
-        const float* grad_output_ptr = static_cast<const float*>(grad_output->data_ptr()) + i * (K_out * H_out * W_out);
-        float* grad_input_ptr = static_cast<float*>(grad_input->mutable_data_ptr()) + i * (C * H * W);
+    // This is a "full" convolution between grad_output and a rotated weight kernel.
+    // It can be implemented as matmul(weight.T, grad_output_reshaped) followed by col2im.
 
-        // GEMM
-        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N,
-                                 N_grad_in, M_grad_in, K_grad_in,
-                                 &alpha,
-                                 grad_output_ptr, N_grad_in,
-                                 static_cast<const float*>(weight->data_ptr()), M_grad_in,
-                                 &beta,
-                                 col_buffer_gpu, N_grad_in));
+    // Reshape weight from (C_out, C_in, kH, kW) to (C_out, C_in*kH*kW)
+    auto weight_reshaped = weight->reshape({C_out, C_in * kH * kW});
+    
+    // Transpose the reshaped weight
+    auto weight_reshaped_t = weight_reshaped->transpose(); // Shape: (C_in*kH*kW, C_out)
 
-        // col2im to get grad_input
-        int num_kernels_col2im = C * H * W;
-        int threads_per_block_col2im = 256;
-        int blocks_col2im = (num_kernels_col2im + threads_per_block_col2im - 1) / threads_per_block_col2im;
-        col2im_kernel<<<blocks_col2im, threads_per_block_col2im>>>(col_buffer_gpu, C, H, W, KH, KW, padding, padding, stride, stride, H_out, W_out, grad_input_ptr);
+    // Perform GEMM to get the column matrix for the input gradient
+    auto grad_input_col = weight_reshaped_t->matmul(grad_output_reshaped); // Shape: (C_in*kH*kW, N*H_out*W_out)
+
+    // Create the final gradient tensor for the input, initialized to zeros
+    auto grad_input = Tensor::zeros(in_shape, false, Device::CUDA);
+
+    // Perform col2im to get the final grad_input
+    size_t n = grad_input_col->size();
+    if (n > 0) {
+        int threads = 256;
+        int blocks = (n + threads - 1) / threads;
+        col2im_kernel<<<blocks, threads>>>(
+            static_cast<const float*>(grad_input_col->data_ptr()),
+            static_cast<float*>(grad_input->mutable_data_ptr()),
+            N, C_in, H_in, W_in, kH, stride, padding, H_out, W_out
+        );
         CUDA_CHECK(cudaPeekAtLastError());
     }
 
-    // --- 3. Calculate grad_bias ---
-    int threads_bias = 256;
-    int blocks_bias = K_out;
-    sum_bias_kernel<<<blocks_bias, threads_bias, threads_bias * sizeof(float)>>>(
-        static_cast<const float*>(grad_output->data_ptr()),
-        static_cast<float*>(grad_bias->mutable_data_ptr()),
-        N, K_out, H_out, W_out
-    );
-    CUDA_CHECK(cudaPeekAtLastError());
-
-    // Cleanup
-    CUDA_CHECK(cudaFree(col_buffer_gpu));
-    cublasDestroy(handle);
-
-    return {grad_input, grad_weight, grad_bias};
+    return {grad_input, grad_weight};
 }
 
+// ----------------------------------------------------------------------------
+// MaxPool2D Forward (CUDA Kernel and Host Function)
+// ----------------------------------------------------------------------------
+__global__ void maxpool2d_forward_kernel(const float* input_data, float* output_data, float* max_indices_data,
+                                       int N, int C, int H, int W,
+                                       int k, int s,
+                                       int H_out, int W_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < N * C * H_out * W_out) {
+        // Decompose index to find the output pixel location
+        int w_out = index % W_out;
+        int h_out = (index / W_out) % H_out;
+        int c = (index / W_out / H_out) % C;
+        int n = index / W_out / H_out / C;
 
+        // Find the top-left corner of the pooling window in the input
+        int h_start = h_out * s;
+        int w_start = w_out * s;
 
-std::shared_ptr<Tensor> maxpool2d_forward_cuda(const std::shared_ptr<Tensor>& input, size_t kernel_size, size_t stride, std::vector<size_t>& max_indices) {
-    size_t N = input->shape()[0];
-    size_t C = input->shape()[1];
-    size_t H = input->shape()[2];
-    size_t W = input->shape()[3];
+        // Find the maximum value in the window
+        float max_val = -FLT_MAX;
+        int max_idx = -1;
+
+        for (int i = 0; i < k; ++i) {
+            for (int j = 0; j < k; ++j) {
+                int h_in = h_start + i;
+                int w_in = w_start + j;
+                if (h_in < H && w_in < W) {
+                    int input_idx = n * C * H * W + c * H * W + h_in * W + w_in;
+                    float current_val = input_data[input_idx];
+                    if (current_val > max_val) {
+                        max_val = current_val;
+                        max_idx = input_idx;
+                    }
+                }
+            }
+        }
+        output_data[index] = max_val;
+        max_indices_data[index] = static_cast<float>(max_idx); // Store index as float
+    }
+}
+
+std::shared_ptr<Tensor> maxpool2d_forward_cuda(const std::shared_ptr<Tensor>& input, size_t kernel_size, size_t stride, std::shared_ptr<Tensor>& max_indices_tensor) {
+    const auto& shape = input->shape();
+    size_t N = shape[0], C = shape[1], H = shape[2], W = shape[3];
 
     size_t H_out = (H - kernel_size) / stride + 1;
     size_t W_out = (W - kernel_size) / stride + 1;
-    
-    auto output = Tensor::zeros({N, C, H_out, W_out}, input->requires_grad(), Device::CUDA);
-    
-    size_t* d_max_indices;
-    size_t total_output_size = N * C * H_out * W_out;
-    CUDA_CHECK(cudaMalloc(&d_max_indices, total_output_size * sizeof(size_t)));
+
+    auto output = Tensor::zeros({N, C, H_out, W_out}, false, Device::CUDA);
+    max_indices_tensor = Tensor::zeros({N, C, H_out, W_out}, false, Device::CUDA); // To store indices
+
+    size_t n_out = output->size();
+    if (n_out == 0) return output;
 
     int threads = 256;
-    int blocks = (total_output_size + threads - 1) / threads;
-    max_pool_forward_kernel<<<blocks, threads>>>( static_cast<const float*>(input->data_ptr()), static_cast<float*>(output->mutable_data_ptr()), d_max_indices, N, C, H, W, H_out, W_out, kernel_size, stride );
-    CUDA_CHECK(cudaPeekAtLastError());
+    int blocks = (n_out + threads - 1) / threads;
 
-    max_indices.resize(total_output_size);
-    CUDA_CHECK(cudaMemcpy(max_indices.data(), d_max_indices, total_output_size * sizeof(size_t), cudaMemcpyDeviceToHost));
-    
-    CUDA_CHECK(cudaFree(d_max_indices));
-    
-    return output;
-}
-
-__global__ void maxpool2d_backward_kernel(const float* grad_output, float* grad_input, const size_t* max_indices, size_t n_output) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= n_output) {
-        return;
-    }
-
-    // 获取输出梯度值
-    float grad_val = grad_output[index];
-
-    // 获取该梯度对应的、在前向传播时的原始输入位置
-    size_t input_idx = max_indices[index];
-
-    // 使用原子操作将梯度值加到输入梯度张量的对应位置
-    // atomicAdd 对于scatter操作是安全的
-    atomicAdd(&grad_input[input_idx], grad_val);
-}
-
-// --- MaxPool2D Backward Host-side Launcher ---
-
-std::shared_ptr<Tensor> maxpool2d_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& input, const std::vector<size_t>& max_indices) {
-    // 创建一个新的输入梯度张量，其形状与原始输入相同，并初始化为0
-    auto grad_input = Tensor::zeros(input->shape(), false, Device::CUDA);
-
-    size_t output_size = grad_output->size();
-    if (output_size == 0) {
-        return grad_input; // 如果没有输出，则无需计算
-    }
-
-    // 将 max_indices 从主机内存(std::vector)拷贝到设备内存
-    size_t* d_max_indices;
-    CUDA_CHECK(cudaMalloc(&d_max_indices, max_indices.size() * sizeof(size_t)));
-    CUDA_CHECK(cudaMemcpy(d_max_indices, max_indices.data(), max_indices.size() * sizeof(size_t), cudaMemcpyHostToDevice));
-
-    // 配置并启动CUDA核函数
-    int threads = 256;
-    int blocks = (output_size + threads - 1) / threads;
-    maxpool2d_backward_kernel<<<blocks, threads>>>(
-        static_cast<const float*>(grad_output->data_ptr()),
-        static_cast<float*>(grad_input->mutable_data_ptr()),
-        d_max_indices,
-        output_size
+    maxpool2d_forward_kernel<<<blocks, threads>>>(
+        static_cast<const float*>(input->data_ptr()),
+        static_cast<float*>(output->mutable_data_ptr()),
+        static_cast<float*>(max_indices_tensor->mutable_data_ptr()),
+        N, C, H, W, kernel_size, stride, H_out, W_out
     );
     CUDA_CHECK(cudaPeekAtLastError());
 
-    // 释放为indices分配的设备内存
-    CUDA_CHECK(cudaFree(d_max_indices));
+    return output;
+}
+
+
+// ----------------------------------------------------------------------------
+// MaxPool2D Backward (CUDA Kernel and Host Function)
+// ----------------------------------------------------------------------------
+__global__ void maxpool2d_backward_kernel(float* grad_input, const float* grad_output, const float* max_indices_data, size_t n_grad_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < n_grad_out) {
+        float grad_out_val = grad_output[index];
+        int input_idx = static_cast<int>(max_indices_data[index]);
+        if (input_idx != -1) {
+            atomicAdd(&grad_input[input_idx], grad_out_val);
+        }
+    }
+}
+
+std::shared_ptr<Tensor> maxpool2d_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& max_indices_tensor, const std::vector<size_t>& input_shape) {
+    auto grad_input = Tensor::zeros(input_shape, false, Device::CUDA);
+
+    size_t n_grad_out = grad_output->size();
+    if (n_grad_out == 0) return grad_input;
+
+    int threads = 256;
+    int blocks = (n_grad_out + threads - 1) / threads;
+
+    maxpool2d_backward_kernel<<<blocks, threads>>>(
+        static_cast<float*>(grad_input->mutable_data_ptr()),
+        static_cast<const float*>(grad_output->data_ptr()),
+        static_cast<const float*>(max_indices_tensor->data_ptr()),
+        n_grad_out
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
 
     return grad_input;
+}
+
+__global__ void rearrange_output_kernel(const float* matmul_data, float* output_data,
+                                     int N, int C_out, int H_out, int W_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_elements = N * C_out * H_out * W_out;
+
+    if (index < total_elements) {
+        // 从线性索引分解出 N, C, H, W 坐标
+        int w = index % W_out;
+        int h = (index / W_out) % H_out;
+        int c = (index / (W_out * H_out)) % C_out;
+        int n = index / (W_out * H_out * C_out);
+
+        // 计算源数据 (matmul_result) 中的索引
+        // matmul_result 的形状是 [C_out, N*H_out*W_out]
+        // N*H_out*W_out 是内循环
+        int H_W_out = H_out * W_out;
+        int src_idx = c * (N * H_W_out) + n * H_W_out + h * W_out + w;
+        
+        output_data[index] = matmul_data[src_idx];
+    }
+}
+
+void rearrange_output_kernel_launcher(const float* matmul_data, float* output_data,
+                                     int N, int C_out, int H_out, int W_out) {
+    size_t n_out = N * C_out * H_out * W_out;
+    if (n_out == 0) return;
+    int threads = 256;
+    int blocks = (n_out + threads - 1) / threads;
+    rearrange_output_kernel<<<blocks, threads>>>(matmul_data, output_data, N, C_out, H_out, W_out);
+    CUDA_CHECK(cudaPeekAtLastError());
 }

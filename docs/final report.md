@@ -9,9 +9,9 @@
 [TOC]
 
 **摘要：**
-123456
+mytorch是一个基于动态计算框架的轻量级神经网络算子并行加速库，旨在通过多设备支持（CPU/GPU）和高效并行算法（如OpenMP和CUDA）优化深度学习模型的训练与推理性能。该框架参考PyTorch的核心设计，实现了张量计算、自动微分、计算图追踪等基础功能，并提供了模块化的神经网络层（如Linear、Conv2D）和优化器（如SGD）。此外，我们团队在mytorch基础上集成了FlashAttention算法，通过online-softmax和分块访存技术显著提升了Attention算子的计算效率。实验表明，mytorch能够成功在MNIST数据集上训练，且CPU/GPU并行加速效果显著，为轻量化深度学习框架的开发提供了实践参考。通过几周的努力以及上千行代码的实践，我们成功完成了我们预设的目标。
 
-**关键词**：mytorch；pytorch；flashattention；OpenMP；CUDA编程；
+**关键词**：mytorch; pytorch; flashattention; OpenMP; CUDA; 自动微分; 并行计算; 神经网络加速
 
 相关代码已上传到团队仓库：[Legend717/mytorch](https://github.com/Legend717/mytorch)
 
@@ -592,9 +592,204 @@ backward的实现和flash-2的cuda实现更相近，在部分测试中甚至超�
 
 ### **6. mytorch使用示例与效果展示**
 
+#### **6.1 以mnist数据集的训练为例**
 
+完整代码请参考`gpu/examples/mnist_test.cpp`
+
+**头文件引入**
+
+```cpp
+#include "core/tensor.h"
+#include "nn/module.h"
+#include "nn/linear.h"
+#include "nn/activations.h"
+#include "nn/sequential.h"
+#include "nn/flatten.h"
+#include "optim/sgd.h"
+#include "loader/mnist_loader.h"
+```
+
+这些头文件引入了mytorch框架的核心组件：
+
+- `tensor.h`: 定义了张量(Tensor)类，是框架的基础数据结构
+- 各种神经网络模块：线性层、激活函数、序列容器等
+- 优化器：SGD优化器
+- 数据加载器：MNIST数据集加载器
+
+**设备设置**
+
+```cpp
+Device device = Device::CPU;
+if (cuda_err == cudaSuccess && device_count > 0) {
+    device = Device::CUDA;
+}
+```
+
+我们的mytorch框架支持CPU和CUDA设备，这里自动检测并选择可用的设备。
+
+**模型定义**
+
+```cpp
+auto model = std::make_shared<nn::Sequential>(
+    std::vector<std::shared_ptr<nn::Module>>{
+        std::make_shared<nn::Linear>(INPUT_FEATURES, HIDDEN_FEATURES),
+        std::make_shared<nn::ReLU>(),
+        std::make_shared<nn::Linear>(HIDDEN_FEATURES, OUTPUT_CLASSES)
+    }
+);
+model->to(device);
+```
+
+这里使用了mytorch框架的`Sequential`容器来构建一个简单的全连接网络：
+
+1. 第一个线性层(784->32)
+2. ReLU激活函数
+3. 第二个线性层(32->10)
+
+`model->to(device)`将模型参数移动到指定设备(CPU或CUDA)。
+
+**优化器设置**
+
+```cpp
+optim::SGD optimizer(model->parameters(), LEARNING_RATE);
+```
+
+使用mytorch框架的SGD优化器，传入模型参数和学习率。
+
+**数据加载**
+
+```cpp
+MnistLoader::load(MNIST_DATA_PATH, X_train_cpu, y_train_cpu, X_test_cpu, y_test_cpu);
+auto X_train = X_train_cpu->to(device);
+```
+
+使用mytorch的MNIST加载器加载数据，然后使用`to(device)`方法将数据移动到指定设备。
+
+**训练循环**
+
+训练循环展示了mytorch框架的核心API调用：
+
+- 前向传播
+
+```cpp
+auto y_pred = model->forward(x_batch);
+```
+
+- 损失计算
+
+```cpp
+auto loss = mse_loss(y_pred, y_batch);
+```
+
+- 反向传播
+
+```cpp
+loss->backward();
+```
+
+- 参数更新
+
+```cpp
+optimizer.step();
+```
+
+**辅助函数**
+
+- 准确率计算
+
+```cpp
+float calculate_accuracy(const std::shared_ptr<Tensor>& pred, const std::shared_ptr<Tensor>& target) {
+    auto pred_data = pred->data_cpu();
+    auto target_data = target->data_cpu();
+    // ... 计算逻辑 ...
+}
+```
+
+- MSE损失
+
+```cpp
+std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std::shared_ptr<Tensor>& target) {
+    auto diff = pred->sub(target);
+    auto sq_diff = diff->mul(diff);
+    auto sum_loss = sq_diff->sum();
+    // ... 缩放处理 ...
+}
+```
+
+#### **6.2 测试结果展示**
+
+以下两张图是CPU跑出来的结果：
+
+<img src="static/cpu4.png" alt="image-20250710200941903" style="zoom:50%;" />
 
 <img src="static/cpu1.png" alt="image-20250710195838715" style="zoom:33%;" />
+
+以下是GPU的结果：
+
+<img src="static/gpu.png" alt="image-20250710201232054" style="zoom:50%;" />
+
+可以看到，CPU和GPU设备均能正常执行。
+
+#### **6.3 并行算法加速情况**
+
+手写数字集（MNIST）的训练速度对比（所测试CPU为6核心）：
+
+| 设备 | 线程数 | 训练时间（s） | 加速比 |
+| :--: | :----: | :-----------: | :----: |
+| CPU  |   1    |     1200      |  1.0   |
+| CPU  |   4    |      390      |  3.08  |
+| CPU  |   8    |      260      |  4.62  |
+| GPU  |   -    |      30       |   40   |
+
+从上表可以看出，我们的mytorch框架并行效果显著，CPU的加速比达到预期目标。
+
+从中也可以看出，在没有对GPU的CUDA相关代码做很深度的优化的情况下，GPU在机器学习上的潜力远远大于CPU。
+
+#### **6.4 FlashAttention + mytorch**
+
+最后，我们在`cpu/examples/flash_test.cpp`中尝试了我们mytorch架构对高级优化算子的支持。
+
+```cpp
+int main() {
+    py::scoped_interpreter guard{};  // 只初始化一次解释器
+    std::cout << "Python interpreter initialized" << std::endl;
+
+    // 创建输入
+    auto Q = Tensor::randn({16, 8, 64, 16},true);
+    auto K = Tensor::randn({16, 8, 64, 16}, true);
+    auto V = Tensor::randn({16, 8, 64, 16}, true);
+    show_tensor(Q);
+
+    // 调用 flash attention 前向
+    auto attn_layer = std::make_shared<nn::FlashAttn>(false, 1.0f); 
+    printf("atten layer created address: %p\n", attn_layer.get());
+    auto o = attn_layer->forward({Q, K, V});
+    std::cout << "Output shape: " << o->shape()[0] << ", " << o->shape()[1] << ", " << o->shape()[2] << ", " << o->shape()[3] << std::endl;
+    o->backward();  // 触发反向传播
+    show_tensor(o);
+    //测试反向传播
+    auto label = Tensor::randn({64, 8, 128, 64}); // 假设标签与输出形状一致
+    auto loss = mse_loss(Q, label);
+    loss->backward();  // 触发反向传播
+
+    return 0;  // 解释器由 guard 自动清理
+}
+```
+
+### **附录：个人报告**
+
+- **陈兴平 22336037**
+  - **具体工作**
+    - 与刘华壹同学共同完成了整个mytorch框架的设计
+    - 实现了大多数tensor的前向传播以及反向传播
+    - 参与了Function的实现以及nn的构建
+    - 通过omp实现了CPU版本的并行，并写了`linear_test.cpp`测试函数
+    - 为了兼容GPU，在CPU代码的基础上重构了部分函数，并增加了to方法等方法
+    - 制造并修复了很多bug，最终让项目成功运行
+  - **感想**
+    - 这次大工程让我深深认识到了框架设计的重要性。同时，在写代码过程中借鉴了许多pytorch的设计和实现思路，让我对pytorch有了更加深刻的理解。
+    - 本次项目我手写了可能上千行代码，在代码成功运行的那一刻，非常的有成就感，感谢老师和助教给了我们这样尝试自己、突破自己的机会。
+- 
 
 ### **参考资料**
 

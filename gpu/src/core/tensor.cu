@@ -6,17 +6,16 @@
 #include <iostream>
 #include <numeric>
 
-// --- CUDA 错误检查宏 ---
-#define CUDA_CHECK(call) do { \
-    cudaError_t err = call; \
+#define CUDA_CHECK(call) \
+do { \
+    cudaError_t err = (call); \
     if (err != cudaSuccess) { \
-        fprintf(stderr, "CUDA Error in %s:%d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
-        exit(1); \
+        fprintf(stderr, "CUDA error in file '%s' in line %i: %s\n", \
+                __FILE__, __LINE__, cudaGetErrorString(err)); \
+        exit(EXIT_FAILURE); \
     } \
-} while(0)
+} while (0)
 
-
-// --- 私有辅助函数的 CUDA 部分 ---
 // 这个函数由构造函数调用，负责根据设备分配内存
 void Tensor::allocate_data() {
     size_t total_size = this->size();
@@ -39,15 +38,12 @@ Tensor::~Tensor() {
     if (_data) {
         if (_device == Device::CPU) {
             delete static_cast<std::vector<float>*>(_data);
-        } else { // _device == Device::CUDA
-            // cudaFree 在内部会检查指针是否为空，但我们为了保持良好习惯也进行检查
+        } else {
+            // cudaFree 在内部会检查指针是否为空，以防万一检查一下
             CUDA_CHECK(cudaFree(_data));
         }
     }
 }
-
-
-// --- 数据访问与设备转移 ---
 
 // 从任何设备获取数据的CPU拷贝
 std::vector<float> Tensor::data_cpu() const {
@@ -67,11 +63,11 @@ std::vector<float> Tensor::data_cpu() const {
 // 获取单个元素的值，针对GPU做了优化
 float Tensor::item() const {
     if (this->size() != 1) {
-        throw std::runtime_error("item() can only be called on tensors with a single element.");
+        throw std::runtime_error("item() 只能用于标量Tensor");
     }
     if (_device == Device::CPU) {
         return (*static_cast<std::vector<float>*>(_data))[0];
-    } else { // _device == Device::CUDA
+    } else {
         float host_val;
         CUDA_CHECK(cudaMemcpy(&host_val, _data, sizeof(float), cudaMemcpyDeviceToHost));
         return host_val;
@@ -80,26 +76,57 @@ float Tensor::item() const {
 
 // 将张量移动到另一个设备
 std::shared_ptr<Tensor> Tensor::to(Device device) {
+    // 如果已经在目标设备上，直接返回自身的共享指针
     if (this->_device == device) {
         return shared_from_this();
     }
     
-    // 创建一个位于目标设备的新张量
+    // 创建一个位于目标设备的新张量，它会自动分配好目标设备的内存
     auto new_tensor = std::make_shared<Tensor>(_shape, _requires_grad, device);
     size_t data_size = this->size() * sizeof(float);
-    if (data_size == 0) return new_tensor;
+    if (data_size == 0) {
+        return new_tensor;
+    }
 
-    // 根据方向进行拷贝
-    if (device == Device::CUDA) { // CPU -> CUDA
-        CUDA_CHECK(cudaMemcpy(new_tensor->mutable_data_ptr(), this->data_ptr(), data_size, cudaMemcpyHostToDevice));
-    } else { // CUDA -> CPU
-        CUDA_CHECK(cudaMemcpy(new_tensor->mutable_data_ptr(), this->data_ptr(), data_size, cudaMemcpyDeviceToHost));
+    // 根据数据转移的方向，选择正确的指针和拷贝方式
+    if (device == Device::CUDA) { // 方向: CPU -> CUDA
+        // 源(this)在CPU上, _data 是 std::vector<float>*
+        // 目标(new_tensor)在GPU上, mutable_data_ptr() 返回 float* (GPU地址)
+
+        // 1. 从源CPU张量中获取 std::vector<float> 对象
+        auto& src_vector = *static_cast<std::vector<float>*>(this->mutable_data_ptr());
+        
+        // 2. 使用 .data() 方法获取指向vector底层连续数据的裸指针 (float*)
+        const float* src_ptr = src_vector.data();
+
+        // 3. 执行从主机到设备的内存拷贝
+        CUDA_CHECK(cudaMemcpy(
+            new_tensor->mutable_data_ptr(), // 目标: GPU地址 (void*)
+            src_ptr,                        // 源: CPU上原始数据的地址 (const float*)
+            data_size, 
+            cudaMemcpyHostToDevice
+        ));
+
+    } else { // 方向: CUDA -> CPU
+        // 源(this)在GPU上, _data 是 float* (GPU地址)
+        // 目标(new_tensor)在CPU上, _data 是 std::vector<float>*
+        
+        // 1. 从目标CPU张量中获取 std::vector<float> 对象
+        auto& dst_vector = *static_cast<std::vector<float>*>(new_tensor->mutable_data_ptr());
+        
+        // 2. 使用 .data() 方法获取指向vector底层连续数据的裸指针 (float*)
+        float* dst_ptr = dst_vector.data();
+        
+        // 3. 执行从设备到主机的内存拷贝
+        CUDA_CHECK(cudaMemcpy(
+            dst_ptr,                        // 目标: CPU上原始数据的地址 (float*)
+            this->data_ptr(),               // 源: GPU地址 (const void*)
+            data_size, 
+            cudaMemcpyDeviceToHost
+        ));
     }
     return new_tensor;
 }
-
-
-// --- 工厂方法 (randn, ones, zeros) ---
 
 // 用于填充GPU张量的辅助核函数
 __global__ void fill_kernel(float* data, float value, size_t n) {
@@ -117,7 +144,6 @@ void fill_value_gpu(float* data, float value, size_t n) {
     fill_kernel<<<blocks, threads>>>(data, value, n);
     CUDA_CHECK(cudaPeekAtLastError());
 }
-
 
 // randn 的设备分发实现
 std::shared_ptr<Tensor> Tensor::randn(const std::vector<size_t>& shape, bool requires_grad, Device device) {
@@ -137,7 +163,6 @@ std::shared_ptr<Tensor> Tensor::randn(const std::vector<size_t>& shape, bool req
         // 使用时间和时钟周期组合作为种子，增加随机性
         curandSetPseudoRandomGeneratorSeed(gen, time(NULL) + clock());
         curandGenerateNormal(gen, static_cast<float*>(t->mutable_data_ptr()), n, 0.0f, 1.0f);
-        // FIX: Corrected function name from curandDestroy to curandDestroyGenerator
         curandDestroyGenerator(gen);
     }
     return t;
@@ -146,14 +171,19 @@ std::shared_ptr<Tensor> Tensor::randn(const std::vector<size_t>& shape, bool req
 // ones 的设备分发实现
 std::shared_ptr<Tensor> Tensor::ones(const std::vector<size_t>& shape, bool requires_grad, Device device) {
     auto t = std::make_shared<Tensor>(shape, requires_grad, device);
-    if (t->size() == 0) return t;
+    if (t->size() == 0) {
+        return t;
+    }
 
     if (device == Device::CPU) {
-        std::vector<float>& data_vec = *static_cast<std::vector<float>*>(t->mutable_data_ptr());
+        // 对于 CPU, _data 是 std::vector<float>*, 转换是安全的
+        auto& data_vec = *static_cast<std::vector<float>*>(t->mutable_data_ptr());
         std::fill(data_vec.begin(), data_vec.end(), 1.0f);
     } else { // device == Device::CUDA
+        // 对于 CUDA, _data 是 float* (GPU地址), 调用 CUDA 核函数填充
         fill_value_gpu(static_cast<float*>(t->mutable_data_ptr()), 1.0f, t->size());
     }
+    
     return t;
 }
 
@@ -163,9 +193,6 @@ std::shared_ptr<Tensor> Tensor::zeros(const std::vector<size_t>& shape, bool req
     auto t = std::make_shared<Tensor>(shape, requires_grad, device);
     return t;
 }
-
-
-// --- Transpose 的设备分发实现 ---
 
 // 2D 矩阵转置的 CUDA 核函数
 __global__ void transpose_kernel(float* out, const float* in, size_t H, size_t W) {
@@ -178,7 +205,7 @@ __global__ void transpose_kernel(float* out, const float* in, size_t H, size_t W
 }
 
 std::shared_ptr<Tensor> Tensor::transpose() const {
-    if (_shape.size() != 2) throw std::runtime_error("Transpose is only supported for 2D tensors.");
+    if (_shape.size() != 2) throw std::runtime_error("转置操作仅支持二维Tensor");
     
     std::vector<size_t> new_shape = {_shape[1], _shape[0]};
     auto new_tensor = std::make_shared<Tensor>(new_shape, _requires_grad, _device);
@@ -190,8 +217,8 @@ std::shared_ptr<Tensor> Tensor::transpose() const {
         auto& out_data = *static_cast<std::vector<float>*>(new_tensor->mutable_data_ptr());
         size_t H = _shape[0];
         size_t W = _shape[1];
-        for(size_t i=0; i < W; ++i) { // new height
-            for(size_t j=0; j < H; ++j) { // new width
+        for(size_t i = 0; i < W; ++i) { // new height
+            for(size_t j = 0; j < H; ++j) { // new width
                 out_data[i * H + j] = in_data[j * W + i];
             }
         }
@@ -210,3 +237,47 @@ std::shared_ptr<Tensor> Tensor::transpose() const {
     }
     return new_tensor;
 }
+
+// 在Tensor中的第一个维度切出从start到end的部分
+std::shared_ptr<Tensor> Tensor::slice(size_t start, size_t end) const {
+    if(_shape.size() < 1 || start >= end || end > _shape[0]) {
+        throw std::runtime_error("切片参数无效");
+    }
+    
+    size_t feature_size = 1;
+    for(size_t i = 1; i < _shape.size(); ++i) {
+        feature_size *= _shape[i];
+    }
+    
+    std::vector<size_t> new_shape = _shape;
+    new_shape[0] = end - start;
+    
+    // 创建新张量
+    auto new_tensor = std::make_shared<Tensor>(new_shape, _requires_grad, _device);
+    
+    if (this->size() == 0) return new_tensor;
+    
+    if (_device == Device::CPU) {
+        // CPU 内存处理
+        const auto& src_data = *static_cast<const std::vector<float>*>(_data);
+        auto& dst_data = *static_cast<std::vector<float>*>(new_tensor->mutable_data_ptr());
+        
+        auto start_sl = src_data.begin() + start * feature_size;
+        auto end_sl = src_data.begin() + end * feature_size;
+        dst_data.assign(start_sl, end_sl);
+    } else {
+        // GPU 内存处理
+        size_t copy_size = (end - start) * feature_size;
+        const float* src_start = static_cast<const float*>(_data) + start * feature_size;
+        
+        CUDA_CHECK(cudaMemcpy(
+            new_tensor->mutable_data_ptr(),
+            src_start,
+            copy_size * sizeof(float),
+            cudaMemcpyDeviceToDevice
+        ));
+    }
+    
+    return new_tensor;
+}
+

@@ -12,7 +12,9 @@ public:
 
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
-    void to(Device device) override; // 新增 to 的重写
+
+    void to(Device device) override;
+
 private:
     std::vector<std::shared_ptr<Module>> _layers;
 };

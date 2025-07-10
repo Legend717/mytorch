@@ -2,15 +2,15 @@
 #include <pybind11/embed.h>
 #include <pybind11/stl.h>
 #include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>  // ✅ 必须加这个头文件
+#include <pybind11/numpy.h>  // ✅ 必须加这个头文件b
 #include <vector>
 #include <memory>
 #include "tensor.h"  // Include the header file where Tensor is defined
 namespace py = pybind11;
 
-class Tensor; // 前向声明
+class Tensor;
 
-// Inherit from std::enable_shared_from_this to use shared_from_this()
+// 继承自enable_shared_from_this，使得Function对象可以被shared_ptr管理
 class Function : public std::enable_shared_from_this<Function> {
 public:
     virtual ~Function() = default;
@@ -19,13 +19,15 @@ public:
     std::vector<std::shared_ptr<Tensor>> backward(const std::shared_ptr<Tensor>& grad_output);
     
     std::vector<std::shared_ptr<Tensor>> _saved_inputs;
-
+    void release_saved_inputs(); 
+    
 protected:
+    // 纯虚函数，由子类实现
     virtual std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) = 0;
     virtual std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) = 0;
 };
 
-// --- 具体运算 ---
+// 运算
 class Add : public Function {
 protected:
     std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) override;
@@ -96,26 +98,21 @@ protected:
     std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
 };
 
-py::array_t<float> tensor_to_numpy(const std::shared_ptr<Tensor>& t);
-
-std::shared_ptr<Tensor> numpy_to_tensor(const py::array_t<float>& arr);
-
 // --- Flash Attention ---
-
 class FlashAttenFunc : public Function {
-private:
-    bool _causal;  //other parameters can be fetched from inputs(Tensor class)
-    float _sm_scale;
-    int _block_dmodel; // 用于存储 block_dmodel
-    int _grid[3]; // 用于存储 grid
-    std::shared_ptr<Tensor> saved_o; // 保存 O 的张量
-    std::shared_ptr<Tensor> saved_l; // 保存 L 的张量
-
-public:
-    FlashAttenFunc(bool causal = false, float sm_scale = 1.0f)
-        : _causal(causal), _sm_scale(sm_scale) {}
-protected:
-    std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) override;
- 
-    std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
-};
+    private:
+        bool _causal;  //other parameters can be fetched from inputs(Tensor class)
+        float _sm_scale;
+        int _block_dmodel; // 用于存储 block_dmodel
+        int _grid[3]; // 用于存储 grid
+        std::shared_ptr<Tensor> saved_o; // 保存 O 的张量
+        std::shared_ptr<Tensor> saved_l; // 保存 L 的张量
+    
+    public:
+        FlashAttenFunc(bool causal = false, float sm_scale = 1.0f)
+            : _causal(causal), _sm_scale(sm_scale) {}
+    protected:
+        std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) override;
+     
+        std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
+    };

@@ -20,10 +20,11 @@ std::vector<std::shared_ptr<Tensor>> Sequential::parameters() {
     }
     return params;
 }
-// --- 新增 to 的实现 ---
+
 void Sequential::to(Device device) {
     for(auto& layer : _layers) {
         layer->to(device); // 递归调用每一层的 to 方法
     }
 }
+
 } // namespace nn
