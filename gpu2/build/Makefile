@@ -142,6 +142,19 @@ linear_test_gpu/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/linear_test_gpu.dir/build.make CMakeFiles/linear_test_gpu.dir/build
 .PHONY : linear_test_gpu/fast
 
+#=============================================================================
+# Target rules for targets named mnist_test
+
+# Build rule for target.
+mnist_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 mnist_test
+.PHONY : mnist_test
+
+# fast build rule for target.
+mnist_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mnist_test.dir/build.make CMakeFiles/mnist_test.dir/build
+.PHONY : mnist_test/fast
+
 examples/linear_test_gpu.o: examples/linear_test_gpu.cpp.o
 .PHONY : examples/linear_test_gpu.o
 
@@ -165,6 +178,30 @@ examples/linear_test_gpu.s: examples/linear_test_gpu.cpp.s
 examples/linear_test_gpu.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/linear_test_gpu.dir/build.make CMakeFiles/linear_test_gpu.dir/examples/linear_test_gpu.cpp.s
 .PHONY : examples/linear_test_gpu.cpp.s
+
+examples/mnist_test.o: examples/mnist_test.cpp.o
+.PHONY : examples/mnist_test.o
+
+# target to build an object file
+examples/mnist_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mnist_test.dir/build.make CMakeFiles/mnist_test.dir/examples/mnist_test.cpp.o
+.PHONY : examples/mnist_test.cpp.o
+
+examples/mnist_test.i: examples/mnist_test.cpp.i
+.PHONY : examples/mnist_test.i
+
+# target to preprocess a source file
+examples/mnist_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mnist_test.dir/build.make CMakeFiles/mnist_test.dir/examples/mnist_test.cpp.i
+.PHONY : examples/mnist_test.cpp.i
+
+examples/mnist_test.s: examples/mnist_test.cpp.s
+.PHONY : examples/mnist_test.s
+
+# target to generate assembly for a file
+examples/mnist_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/mnist_test.dir/build.make CMakeFiles/mnist_test.dir/examples/mnist_test.cpp.s
+.PHONY : examples/mnist_test.cpp.s
 
 src/core/function.o: src/core/function.cpp.o
 .PHONY : src/core/function.o
@@ -439,10 +476,14 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... linear_test_gpu"
+	@echo "... mnist_test"
 	@echo "... mytorch"
 	@echo "... examples/linear_test_gpu.o"
 	@echo "... examples/linear_test_gpu.i"
 	@echo "... examples/linear_test_gpu.s"
+	@echo "... examples/mnist_test.o"
+	@echo "... examples/mnist_test.i"
+	@echo "... examples/mnist_test.s"
 	@echo "... src/core/function.o"
 	@echo "... src/core/function.i"
 	@echo "... src/core/function.s"

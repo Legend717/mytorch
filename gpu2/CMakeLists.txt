@@ -40,11 +40,11 @@ target_link_libraries(mytorch PRIVATE CUDA::cudart CUDA::cublas CUDA::curand)
 
 # 可执行文件
 add_executable(linear_test_gpu examples/linear_test_gpu.cpp)
-# add_executable(mnist_test examples/mnist.cpp)
+add_executable(mnist_test examples/mnist_test.cpp)
 
 # 将框架库链接到示例程序
 target_link_libraries(linear_test_gpu mytorch CUDA::cudart)
-# target_link_libraries(mnist_test mytorch)
+target_link_libraries(mnist_test mytorch CUDA::cudart)
 
 # 方便在 IDE 中看到头文件
 target_include_directories(mytorch PUBLIC include)

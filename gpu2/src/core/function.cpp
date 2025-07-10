@@ -26,11 +26,12 @@ std::shared_ptr<Tensor> Function::apply(const std::vector<std::shared_ptr<Tensor
     return output;
 }
 
-// 加法
+
 std::vector<std::shared_ptr<Tensor>> Function::backward(const std::shared_ptr<Tensor>& grad_output) {
     return _backward(grad_output);
 }
 
+// 加法
 std::shared_ptr<Tensor> Add::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
     if (inputs[0]->device() == Device::CUDA) {
         return add_forward_cuda(inputs[0], inputs[1]);
@@ -75,28 +76,27 @@ std::vector<std::shared_ptr<Tensor>> Add::_backward(const std::shared_ptr<Tensor
 
     // 处理维度不同的情况，此时 grad_b 需要进行广播
     if (a->shape() != b->shape()) {
-        // 由于 b 被广播到 a 的每一行，反向传播时需要将 grad_output 的所有行梯度累加到 b 的对应位置
-        size_t batch_size = grad_output->shape()[0];
-        size_t features = grad_output->shape()[1];
-        std::vector<float> sum_grad_data(features, 0.0f);
+        if(b->device() == Device::CUDA){
+            grad_b = add_backward_cuda(grad_output, b);
+        }else{
+            // 由于 b 被广播到 a 的每一行，反向传播时需要将 grad_output 的所有行梯度累加到 b 的对应位置
 
-        // 优化循环顺序：外循环features，内循环batch_size
-        #pragma omp parallel for
-        for(size_t j = 0; j < features; ++j) {
-            float sum = 0.0f;
-            for(size_t i = 0; i < batch_size; ++i) {
-                sum += grad_output->data_cpu()[i * features + j];
+            size_t batch_size = grad_output->shape()[0];
+            size_t features = grad_output->shape()[1];
+            std::vector<float> sum_grad_data(features, 0.0f);
+
+            // 优化循环顺序：外循环features，内循环batch_size
+            #pragma omp parallel for
+            for(size_t j = 0; j < features; ++j) {
+                float sum = 0.0f;
+                for(size_t i = 0; i < batch_size; ++i) {
+                    sum += grad_output->data_cpu()[i * features + j];
+                }
+                sum_grad_data[j] = sum;
             }
-            sum_grad_data[j] = sum;
+            grad_b = Tensor::create(sum_grad_data, b->shape());
         }
-        grad_b = Tensor::create(sum_grad_data, b->shape());
 
-        // for(size_t i = 0; i < batch_size; ++i) {
-        //     for(size_t j = 0; j < features; ++j) {
-        //         sum_grad_data[j] += grad_output->data_cpu()[i * features + j];
-        //     }
-        // }
-        // grad_b = Tensor::create(sum_grad_data, b->shape());
     }
     return {grad_a, grad_b};
 }
@@ -204,7 +204,6 @@ std::shared_ptr<Tensor> Sum::_forward(const std::vector<std::shared_ptr<Tensor>>
     return Tensor::create({sum_val}, {1});
 }
 
-// in src/core/function.cpp
 std::vector<std::shared_ptr<Tensor>> Sum::_backward(const std::shared_ptr<Tensor>& grad_output) {
     //std::cout<<"Sum_backward begin"<<std::endl;
     auto original_input = _saved_inputs[0];

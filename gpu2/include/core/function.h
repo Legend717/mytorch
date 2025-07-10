@@ -98,6 +98,7 @@ std::shared_ptr<Tensor> mul_forward_cuda(const std::shared_ptr<Tensor>& a, const
 std::shared_ptr<Tensor> matmul_forward_cuda(const std::shared_ptr<Tensor>& a, const std::shared_ptr<Tensor>& b);
 std::shared_ptr<Tensor> relu_forward_cuda(const std::shared_ptr<Tensor>& a);
 std::shared_ptr<Tensor> reshape_forward_cuda(const std::shared_ptr<Tensor>& input, const std::vector<size_t>& new_shape);
+std::shared_ptr<Tensor> add_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& b);
 // std::shared_ptr<Tensor> conv2d_forward_cuda(const std::shared_ptr<Tensor>& input, const std::shared_ptr<Tensor>& weight, size_t stride, size_t padding);
 // std::vector<std::shared_ptr<Tensor>> conv2d_backward_cuda(
 //     const std::shared_ptr<Tensor>& grad_output,

@@ -1,5 +1,3 @@
-// omp/include/loader/mnist_loader.h
-
 #ifndef MNIST_LOADER_H
 #define MNIST_LOADER_H
 
@@ -56,7 +54,9 @@ private:
             }
         }
         
-        return std::make_shared<Tensor>(image_data, std::vector<size_t>{num_images, image_size});
+        // --- 修改点 ---
+        // 使用静态工厂方法创建Tensor，这是推荐的方式
+        return Tensor::create(image_data, {num_images, image_size});
     }
 
     // 读取标签数据
@@ -85,7 +85,9 @@ private:
             label_data[i * num_classes + buffer[i]] = 1.0f;
         }
         
-        return std::make_shared<Tensor>(label_data, std::vector<size_t>{num_labels, num_classes});
+        // --- 修改点 ---
+        // 使用静态工厂方法创建Tensor
+        return Tensor::create(label_data, {num_labels, num_classes});
     }
 
 public:

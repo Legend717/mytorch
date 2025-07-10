@@ -226,3 +226,64 @@ std::shared_ptr<Tensor> reshape_forward_cuda(const std::shared_ptr<Tensor>& inpu
     }
     return new_tensor;
 }
+
+__global__ void reduce_sum_columns_kernel(float* out, const float* grad_output, size_t M, size_t N) {
+    // 每个线程块负责计算输出向量中的一个元素（一列的和）
+    int j = blockIdx.x; // 列索引
+
+    if (j < N) {
+        float sum = 0.0f;
+        // 遍历该列的所有行并累加
+        for (size_t i = 0; i < M; ++i) {
+            sum += grad_output[i * N + j];
+        }
+        out[j] = sum;
+    }
+}
+
+// 启动 reduce_sum_columns_kernel 的主机端函数
+std::shared_ptr<Tensor> reduce_sum_columns_cuda(const std::shared_ptr<Tensor>& grad_output, const std::vector<size_t>& target_shape) {
+    // 创建一个新的Tensor用于存储结果，确保它在GPU上
+    auto grad_b = Tensor::zeros(target_shape, false, Device::CUDA);
+    
+    const auto& grad_shape = grad_output->shape();
+    size_t M = grad_shape[0]; // batch_size
+    size_t N = grad_shape[1]; // features
+
+    if (N == 0) return grad_b;
+
+    // 启动核函数：每个线程块计算一列的和，因此需要 N 个块
+    reduce_sum_columns_kernel<<<N, 1>>>(
+        static_cast<float*>(grad_b->mutable_data_ptr()),
+        static_cast<const float*>(grad_output->data_ptr()),
+        M,
+        N
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+
+    return grad_b;
+}
+
+// 新的包装函数：Add 运算在 CUDA 上的反向传播实现
+// 这个函数将被 C++ 代码调用
+std::shared_ptr<Tensor> add_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& b) {
+    // 创建一个新的Tensor用于存储广播后的梯度结果，确保它和 b 在同一设备(GPU)上
+    auto grad_b = Tensor::zeros(b->shape(), false, Device::CUDA);
+    
+    const auto& grad_shape = grad_output->shape();
+    size_t M = grad_shape[0]; // batch_size
+    size_t N = grad_shape[1]; // features
+
+    if (N == 0) return grad_b;
+
+    // 启动核函数：每个线程块计算一列的和，因此需要 N 个块
+    reduce_sum_columns_kernel<<<N, 1>>>(
+        static_cast<float*>(grad_b->mutable_data_ptr()),
+        static_cast<const float*>(grad_output->data_ptr()),
+        M,
+        N
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+
+    return grad_b;
+}

@@ -49,6 +49,9 @@ size_t Tensor::size() const {
 // 设置梯度
 void Tensor::set_grad(std::shared_ptr<Tensor> grad) {
     if (grad && this->device() != grad->device()) {
+        if(grad->device() == Device::CUDA){
+            std::cout<<"CUDA"<<std::endl;
+        }
         throw std::runtime_error("Tensor和Grad所在的设备不同");
     }
     _grad = grad;

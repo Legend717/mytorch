@@ -76,20 +76,54 @@ float Tensor::item() const {
 
 // 将张量移动到另一个设备
 std::shared_ptr<Tensor> Tensor::to(Device device) {
+    // 如果已经在目标设备上，直接返回自身的共享指针
     if (this->_device == device) {
         return shared_from_this();
     }
     
-    // 创建一个位于目标设备的新张量
+    // 创建一个位于目标设备的新张量，它会自动分配好目标设备的内存
     auto new_tensor = std::make_shared<Tensor>(_shape, _requires_grad, device);
     size_t data_size = this->size() * sizeof(float);
-    if (data_size == 0) return new_tensor;
+    if (data_size == 0) {
+        return new_tensor;
+    }
 
-    // 根据方向进行拷贝
-    if (device == Device::CUDA) { // CPU -> CUDA
-        CUDA_CHECK(cudaMemcpy(new_tensor->mutable_data_ptr(), this->data_ptr(), data_size, cudaMemcpyHostToDevice));
-    } else { // CUDA -> CPU
-        CUDA_CHECK(cudaMemcpy(new_tensor->mutable_data_ptr(), this->data_ptr(), data_size, cudaMemcpyDeviceToHost));
+    // 根据数据转移的方向，选择正确的指针和拷贝方式
+    if (device == Device::CUDA) { // 方向: CPU -> CUDA
+        // 源(this)在CPU上, _data 是 std::vector<float>*
+        // 目标(new_tensor)在GPU上, mutable_data_ptr() 返回 float* (GPU地址)
+
+        // 1. 从源CPU张量中获取 std::vector<float> 对象
+        auto& src_vector = *static_cast<std::vector<float>*>(this->mutable_data_ptr());
+        
+        // 2. 使用 .data() 方法获取指向vector底层连续数据的裸指针 (float*)
+        const float* src_ptr = src_vector.data();
+
+        // 3. 执行从主机到设备的内存拷贝
+        CUDA_CHECK(cudaMemcpy(
+            new_tensor->mutable_data_ptr(), // 目标: GPU地址 (void*)
+            src_ptr,                        // 源: CPU上原始数据的地址 (const float*)
+            data_size, 
+            cudaMemcpyHostToDevice
+        ));
+
+    } else { // 方向: CUDA -> CPU
+        // 源(this)在GPU上, _data 是 float* (GPU地址)
+        // 目标(new_tensor)在CPU上, _data 是 std::vector<float>*
+        
+        // 1. 从目标CPU张量中获取 std::vector<float> 对象
+        auto& dst_vector = *static_cast<std::vector<float>*>(new_tensor->mutable_data_ptr());
+        
+        // 2. 使用 .data() 方法获取指向vector底层连续数据的裸指针 (float*)
+        float* dst_ptr = dst_vector.data();
+        
+        // 3. 执行从设备到主机的内存拷贝
+        CUDA_CHECK(cudaMemcpy(
+            dst_ptr,                        // 目标: CPU上原始数据的地址 (float*)
+            this->data_ptr(),               // 源: GPU地址 (const void*)
+            data_size, 
+            cudaMemcpyDeviceToHost
+        ));
     }
     return new_tensor;
 }
@@ -246,3 +280,4 @@ std::shared_ptr<Tensor> Tensor::slice(size_t start, size_t end) const {
     
     return new_tensor;
 }
+
