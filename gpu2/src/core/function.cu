@@ -315,7 +315,6 @@ std::shared_ptr<Tensor> relu_backward_cuda(const std::shared_ptr<Tensor>& grad_o
 
 
 //conv
-
 __global__ void im2col_kernel(const float* data_im, float* data_col,
                             int N, int C, int H, int W,
                             int K, int S, int P,
@@ -325,25 +324,24 @@ __global__ void im2col_kernel(const float* data_im, float* data_col,
     int num_kernels = N * H_out * W_out;
 
     if (index < num_kernels * col_size) {
-        // Calculate the position in the output column matrix
         int col_idx = index % col_size;
         int row_idx = index / col_size;
 
-        // Decompose the column index to find kernel position
+        // 分解列索引以找到核的位置
         int k_w = col_idx % K;
         int k_h = (col_idx / K) % K;
         int c_in = col_idx / (K * K);
 
-        // Decompose the row index to find output pixel position
+        // 分解行索引以找到输出像素的位置
         int w_out = row_idx % W_out;
         int h_out = (row_idx / W_out) % H_out;
         int n = row_idx / (H_out * W_out);
 
-        // Calculate the corresponding input coordinates
+        // 计算输入图像的相应坐标
         int h_in = h_out * S - P + k_h;
         int w_in = w_out * S - P + k_w;
 
-        // Perform the copy if within bounds, otherwise pad with 0
+        // 如果坐标在图像内，则将相应像素的值添加到输出列矩阵中
         if (h_in >= 0 && h_in < H && w_in >= 0 && w_in < W) {
             data_col[index] = data_im[(n * C + c_in) * H * W + h_in * W + w_in];
         } else {
@@ -352,7 +350,7 @@ __global__ void im2col_kernel(const float* data_im, float* data_col,
     }
 }
 
-// Host function to launch the im2col kernel
+// 主机端函数，将输入图像转换为列矩阵，并使用 im2col_kernel 核函数进行处理
 std::shared_ptr<Tensor> im2col_cuda(const std::shared_ptr<Tensor>& input,
                                   size_t K, size_t S, size_t P) {
     const auto& shape = input->shape();
@@ -364,7 +362,7 @@ std::shared_ptr<Tensor> im2col_cuda(const std::shared_ptr<Tensor>& input,
     int H_out = (H + 2 * P - K) / S + 1;
     int W_out = (W + 2 * P - K) / S + 1;
 
-    // Create the output column tensor on the GPU
+    // 在GPU上创建输出列Tensor
     auto col_tensor = Tensor::zeros({(size_t)C * K * K, (size_t)N * H_out * W_out}, false, Device::CUDA);
     size_t n = col_tensor->size();
     if (n == 0) return col_tensor;

@@ -14,7 +14,7 @@
 #include "nn/linear.h"
 #include "nn/activations.h"
 #include "nn/sequential.h"
-#include "nn/flatten.h" // 引入 Flatten 层
+#include "nn/flatten.h"
 #include "optim/sgd.h"
 #include "loader/mnist_loader.h"
 
@@ -76,11 +76,11 @@ int main() {
 
     //超参数
     const size_t INPUT_FEATURES = 784;    // 28x28
-    const size_t HIDDEN_FEATURES = 128;   // 增加隐藏层神经元数量
+    const size_t HIDDEN_FEATURES = 32;   // 隐藏层神经元数量
     const size_t OUTPUT_CLASSES = 10;
-    const float LEARNING_RATE = 0.05f;    // 调整学习率
+    const float LEARNING_RATE = 0.01f;    // 调整学习率
     const int EPOCHS = 10;
-    const size_t BATCH_SIZE = 256;        // 增大大批次大小以利用GPU
+    const size_t BATCH_SIZE = 256;        // 增大大批次大小以利用GPU，如需使用CPU，请减小该值至128
     const std::string MNIST_DATA_PATH = "../data";
 
     //定义模型

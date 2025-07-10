@@ -8,6 +8,7 @@
 
 # vscode编译文件
 .vscode
+.vscode/*.json
 
 # CMake构建目录
 /build/

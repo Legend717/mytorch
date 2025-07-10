@@ -336,53 +336,86 @@ std::shared_ptr<Tensor> ReLUFunc::_forward(const std::vector<std::shared_ptr<Ten
 
 在CUDA版本实现中，核心思路是将大规模矢量/矩阵计算任务分发到成百上千的GPU线程上，通过CUDA kernel函数实现数据并行。
 
-**例：ReLU激活的CUDA实现**
+**例：im2col卷积前向传播**
 
-见 `gpu/src/core/function.cu`：
-```cpp
-std::shared_ptr<Tensor> relu_forward_cuda(const std::shared_ptr<Tensor>& a) {
-    auto output = Tensor::zeros(a->shape(), false, Device::CUDA);
-    size_t n = a->size();
-    if (n == 0) return output;
-    int threads = 256;
-    int blocks = (n + threads - 1) / threads;
-    relu_kernel<<<blocks, threads>>>(
-        static_cast<float*>(output->mutable_data_ptr()), 
-        static_cast<const float*>(a->data_ptr()), n);
-    CUDA_CHECK(cudaPeekAtLastError());
-    return output;
-}
-```
-- 这里通过自定义的`relu_kernel`，在GPU上对所有元素并行执行激活操作，blocks和threads决定了并行粒度，极大提升大批量数据的处理速度。
+im2col_kernel 核函数提供了对卷积的并行，使用的方法是im2col，能够在gpu中显著提升运算速度
 
-**例：SGD优化器的CUDA加速**
+```c
+__global__ void im2col_kernel(const float* data_im, float* data_col,
+                            int N, int C, int H, int W,
+                            int K, int S, int P,
+                            int H_out, int W_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int col_size = C * K * K;
+    int num_kernels = N * H_out * W_out;
 
-见 `gpu/src/optim/sgd.cpp`：
-```cpp
-void sgd_update_cuda(float* params, const float* grads, float lr, size_t n);
+    if (index < num_kernels * col_size) {
+        // 计算在输出列矩阵中的位置
+        int col_idx = index % col_size;  // 列索引(0到C*K*K-1)
+        int row_idx = index / col_size;  // 行索引(0到N*H_out*W_out-1)
 
-void SGD::step() {
-    for (auto& p : _params) {
-        if (p->grad()) {
-            if (p->device() == Device::CUDA) {
-                sgd_update_cuda(
-                    static_cast<float*>(p->mutable_data_ptr()),
-                    static_cast<const float*>(p->grad()->data_ptr()),
-                    _lr,
-                    p->size()
-                );
-            } else {
-                // ...CPU fallback
-            }
+        // 分解列索引找到核位置
+        int k_w = col_idx % K;          // 核宽度坐标
+        int k_h = (col_idx / K) % K;    // 核高度坐标
+        int c_in = col_idx / (K * K);   // 输入通道
+
+        // 分解行索引找到输出像素位置
+        int w_out = row_idx % W_out;    // 输出宽度坐标
+        int h_out = (row_idx / W_out) % H_out; // 输出高度坐标
+    			     int n = row_idx / (H_out * W_out); // 批次索引
+        
+        // 计算对应的输入坐标
+        int h_in = h_out * S - P + k_h;
+        int w_in = w_out * S - P + k_w;
+
+        // 如果在边界内则复制，否则填充0
+        if (h_in >= 0 && h_in < H && w_in >= 0 && w_in < W) {
+            data_col[index] = data_im[(n * C + c_in) * H * W + h_in * W + w_in];
+        } else {
+            data_col[index] = 0.0f;
         }
     }
 }
 ```
-- 其中`sgd_update_cuda`是一个CUDA kernel，能够在GPU上对所有参数并行执行梯度下降。
 
-**其它说明**
-- 所有Tensor的分配与迁移均支持CPU/CUDA双端模式（如`Tensor::to(Device::CUDA)`），底层通过`cudaMalloc`/`cudaMemcpy`等API进行数据管理（见 [`gpu2/src/core/tensor.cu`](https://github.com/Legend717/mytorch/blob/e78a99925302b578b5e0a5b8ab34db0b898f62fa/gpu2/src/core/tensor.cu)）。
-- 高阶操作如卷积、池化、矩阵乘法等也有类似的CUDA kernel实现，能高效利用GPU的强大并行计算能力。
+`im2col_cuda`函数提供了方便的C++接口：
+
+1. 计算输出尺寸：`H_out = (H + 2*P - K)/S + 1`
+2. 创建输出张量：使用`Tensor::zeros`在GPU上分配空间
+3. 启动内核并检查错误
+
+```c
+std::shared_ptr<Tensor> im2col_cuda(const std::shared_ptr<Tensor>& input,
+                                  size_t K, size_t S, size_t P) {
+    const auto& shape = input->shape();
+    int N = shape[0];
+    int C = shape[1];
+    int H = shape[2];
+    int W = shape[3];
+
+    int H_out = (H + 2 * P - K) / S + 1;
+    int W_out = (W + 2 * P - K) / S + 1;
+
+    // 在GPU上创建输出列Tensor
+    auto col_tensor = Tensor::zeros({(size_t)C * K * K, (size_t)N * H_out * W_out}, false, Device::CUDA);
+    size_t n = col_tensor->size();
+    if (n == 0) return col_tensor;
+
+    int threads = 256;
+    int blocks = (n + threads - 1) / threads;
+
+    im2col_kernel<<<blocks, threads>>>(
+        static_cast<const float*>(input->data_ptr()),
+        static_cast<float*>(col_tensor->mutable_data_ptr()),
+        N, C, H, W, K, S, P, H_out, W_out
+    );
+    CUDA_CHECK(cudaPeekAtLastError());
+
+    return col_tensor;
+}
+```
+
+这种实现充分利用了GPU的并行能力，将im2col操作高效地映射到CUDA架构上，是卷积神经网络前向传播的重要优化步骤。
 
 #### **3.5 to方法的实现——CPU和GPU的统一**
 
@@ -418,24 +451,9 @@ std::shared_ptr<Tensor> Tensor::to(Device device) {
 - 针对 CPU->CUDA、CUDA->CPU，各自调用 cudaMemcpy 或直接内存拷贝，保证正确的数据迁移。
 - 迁移时 shape、requires_grad 属性全部保留。
 
----
+##### **3.5.2 to 方法的使用例子**
 
-### 2. 各 Module 的 to 方法递归调用
-
-#### 2.1 nn::Module 抽象基类
-
-在 gpu2/include/nn/module.h：
-
-```cpp
-class Module {
-public:
-    virtual void to(Device device) = 0;
-    // ...
-};
-```
-所有模块都要实现 `to(Device)`，用于将参数迁移到目标设备。
-
-#### 2.2 nn::Linear 的 to 方法
+**nn::Linear 的 to 方法**
 
 在 gpu2/src/nn/linear.cpp：
 
@@ -447,20 +465,7 @@ void Linear::to(Device device) {
 ```
 - 将权重和偏置（Tensor）分别迁移到目标设备。
 
-#### 2.3 nn::Conv2D 的 to 方法
-
-在 gpu2/src/nn/conv.cpp：
-
-```cpp
-void Conv2D::to(Device device) {
-    if (_weight) {
-        _weight = _weight->to(device);
-    }
-}
-```
-- 只迁移卷积核参数。
-
-#### 2.4 nn::Sequential 的 to 方法
+**nn::Sequential 的 to 方法**
 
 在 gpu2/src/nn/sequential.cpp：
 
@@ -473,9 +478,7 @@ void Sequential::to(Device device) {
 ```
 - 对所有子模块递归调用 to，实现整个网络的设备统一。
 
----
-
-### 3. 设备属性与数据分配
+##### **3.5.3 设备属性与数据分配**
 
 在 gpu2/include/core/tensor.h：
 
@@ -497,12 +500,30 @@ class Tensor {
 - 每个 Tensor 都附带 device 信息。
 - 数据分配时 allocate_data() 会根据 device 类型选择分配 CPU 内存（std::vector<float>）或 GPU 内存（cudaMalloc）。
 
----
-
-### 4. 相关辅助/底层实现
+##### **3.5.4 相关辅助/底层实现**
 
 - allocate_data()、data_cpu()、item() 等函数对 device 做专门分支处理，保证数据访问和迁移一致性。
-- 见 [tensor.cu 源码片段](https://github.com/Legend717/mytorch/blob/e78a99925302b578b5e0a5b8ab34db0b898f62fa/gpu2/src/core/tensor.cu)。
+
+这里以`allocate_data()`为例
+
+```cpp
+// 这个函数由构造函数调用，负责根据设备分配内存
+void Tensor::allocate_data() {
+    size_t total_size = this->size();
+    if (total_size == 0) {
+        _data = nullptr;
+        return;
+    }
+
+    if (_device == Device::CPU) {
+        _data = new std::vector<float>(total_size, 0.0f);
+    } else { // _device == Device::CUDA
+        CUDA_CHECK(cudaMalloc(&_data, total_size * sizeof(float)));
+        // 确保新分配的GPU内存被清零，这对于zeros()等操作很重要
+        CUDA_CHECK(cudaMemset(_data, 0, total_size * sizeof(float)));
+    }
+}
+```
 
 ### **4. 加速算法-FlashAttention介绍**
 
@@ -572,6 +593,8 @@ backward的实现和flash-2的cuda实现更相近，在部分测试中甚至超�
 ### **6. mytorch使用示例与效果展示**
 
 
+
+<img src="static/cpu1.png" alt="image-20250710195838715" style="zoom:33%;" />
 
 ### **参考资料**
 
