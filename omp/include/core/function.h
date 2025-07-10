@@ -1,5 +1,12 @@
+#pragma once
+#include <pybind11/embed.h>
+#include <pybind11/stl.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>  // ✅ 必须加这个头文件b
 #include <vector>
 #include <memory>
+#include "tensor.h"  // Include the header file where Tensor is defined
+namespace py = pybind11;
 
 class Tensor;
 
@@ -91,3 +98,21 @@ protected:
     std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
 };
 
+// --- Flash Attention ---
+class FlashAttenFunc : public Function {
+    private:
+        bool _causal;  //other parameters can be fetched from inputs(Tensor class)
+        float _sm_scale;
+        int _block_dmodel; // 用于存储 block_dmodel
+        int _grid[3]; // 用于存储 grid
+        std::shared_ptr<Tensor> saved_o; // 保存 O 的张量
+        std::shared_ptr<Tensor> saved_l; // 保存 L 的张量
+    
+    public:
+        FlashAttenFunc(bool causal = false, float sm_scale = 1.0f)
+            : _causal(causal), _sm_scale(sm_scale) {}
+    protected:
+        std::shared_ptr<Tensor> _forward(const std::vector<std::shared_ptr<Tensor>>& inputs) override;
+     
+        std::vector<std::shared_ptr<Tensor>> _backward(const std::shared_ptr<Tensor>& grad_output) override;
+    };
