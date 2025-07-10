@@ -4,6 +4,7 @@
 #include <numeric>
 #include <omp.h>
 #include <algorithm>
+#include <iostream>
 
 // 基类
 std::shared_ptr<Tensor> Function::apply(const std::vector<std::shared_ptr<Tensor>>& inputs) {
@@ -65,6 +66,7 @@ std::shared_ptr<Tensor> Add::_forward(const std::vector<std::shared_ptr<Tensor>>
 }
 
 std::vector<std::shared_ptr<Tensor>> Add::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    //std::cout<<"Add_backward begin"<<std::endl;
     // 加法操作的梯度是 1，因此 grad_a 和 grad_b 直接等于 grad_output
     auto a = _saved_inputs[0];
     auto b = _saved_inputs[1];
@@ -117,6 +119,7 @@ std::shared_ptr<Tensor> Sub::_forward(const std::vector<std::shared_ptr<Tensor>>
 }
 
 std::vector<std::shared_ptr<Tensor>> Sub::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    //std::cout<<"Sub_backward begin"<<std::endl;
     // 减法的b梯度是-1，因此 grad_b 等于 -grad_output
     auto neg_grad = grad_output->mul(Tensor::create({-1.0f}, {1}))->to(grad_output->device());
     return {grad_output, neg_grad};
@@ -138,6 +141,7 @@ std::shared_ptr<Tensor> Mul::_forward(const std::vector<std::shared_ptr<Tensor>>
 }
 
 std::vector<std::shared_ptr<Tensor>> Mul::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    //std::cout<<"Mul_backward begin"<<std::endl;
     // z = a * b, dl/da = dl/dz * b, dl/db = dl/dz * a
     auto a = _saved_inputs[0];
     auto b = _saved_inputs[1];
@@ -170,6 +174,7 @@ std::shared_ptr<Tensor> MatMul::_forward(const std::vector<std::shared_ptr<Tenso
 }
 
 std::vector<std::shared_ptr<Tensor>> MatMul::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    //std::cout<<"MatMul_backward begin"<<std::endl;
     auto a = _saved_inputs[0];
     auto b = _saved_inputs[1];
     // grad_a = grad_output @ b.T
@@ -199,13 +204,29 @@ std::shared_ptr<Tensor> Sum::_forward(const std::vector<std::shared_ptr<Tensor>>
     return Tensor::create({sum_val}, {1});
 }
 
+// in src/core/function.cpp
 std::vector<std::shared_ptr<Tensor>> Sum::_backward(const std::shared_ptr<Tensor>& grad_output) {
-    auto original_shape = _saved_inputs[0]->shape();
-    size_t total_size = 1;
-    for(auto dim : original_shape) total_size *= dim;
-    // 对于求和，梯度是全 1，因此 grad_output 直接作为输出
-    std::vector<float> grad_data(total_size, grad_output->data_cpu()[0]);
-    return {Tensor::create(grad_data, original_shape)};
+    //std::cout<<"Sum_backward begin"<<std::endl;
+    auto original_input = _saved_inputs[0];
+    auto original_shape = original_input->shape();
+    auto device = original_input->device();
+
+    // 从输入的梯度张量中获取标量梯度值 (grad_output可能在GPU上)
+    float grad_scalar_value = grad_output->item();
+
+    // 创建一个填充了梯度值的 std::vector
+    size_t total_size = original_input->size();
+    std::vector<float> grad_data(total_size, grad_scalar_value);
+
+    // 先在CPU上创建梯度张量
+    auto grad_tensor = Tensor::create(grad_data, original_shape, false);
+    
+    // 如果原始输入在GPU上，则将梯度也移动到GPU
+    if (device == Device::CUDA) {
+        return {grad_tensor->to(device)};
+    }
+    
+    return {grad_tensor};
 }
 
 // ReLU
@@ -223,6 +244,7 @@ std::shared_ptr<Tensor> ReLUFunc::_forward(const std::vector<std::shared_ptr<Ten
 }
 
 std::vector<std::shared_ptr<Tensor>> ReLUFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    //std::cout<<"ReLUFunc_backward begin"<<std::endl;
     const auto& x = _saved_inputs[0]->data_cpu();
     auto x_device = _saved_inputs[0]->device();
     std::vector<float> mask_data(x.size());
@@ -246,6 +268,7 @@ std::shared_ptr<Tensor> ReshapeFunc::_forward(const std::vector<std::shared_ptr<
 }
 
 std::vector<std::shared_ptr<Tensor>> ReshapeFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    //std::cout<<"Reshape_backward begin"<<std::endl;
     auto original_shape = _saved_inputs[0]->shape();
     return { grad_output->reshape(original_shape) };
 }

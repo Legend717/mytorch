@@ -137,14 +137,19 @@ std::shared_ptr<Tensor> Tensor::randn(const std::vector<size_t>& shape, bool req
 // ones 的设备分发实现
 std::shared_ptr<Tensor> Tensor::ones(const std::vector<size_t>& shape, bool requires_grad, Device device) {
     auto t = std::make_shared<Tensor>(shape, requires_grad, device);
-    if (t->size() == 0) return t;
-
-    std::vector<float>& data_vec = *static_cast<std::vector<float>*>(t->mutable_data_ptr());
-    std::fill(data_vec.begin(), data_vec.end(), 1.0f);
-    
-    if (device == Device::CUDA) {
-        return t->to(device);
+    if (t->size() == 0) {
+        return t;
     }
+
+    if (device == Device::CPU) {
+        // 对于 CPU, _data 是 std::vector<float>*, 转换是安全的
+        auto& data_vec = *static_cast<std::vector<float>*>(t->mutable_data_ptr());
+        std::fill(data_vec.begin(), data_vec.end(), 1.0f);
+    } else { // device == Device::CUDA
+        // 对于 CUDA, _data 是 float* (GPU地址), 调用 CUDA 核函数填充
+        fill_value_gpu(static_cast<float*>(t->mutable_data_ptr()), 1.0f, t->size());
+    }
+    
     return t;
 }
 

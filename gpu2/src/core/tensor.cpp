@@ -11,7 +11,7 @@
 #include <string>
 #include <functional>
 #include <random>
-
+#include <stdexcept>
 // 构造函数
 Tensor::Tensor(std::vector<size_t> shape, bool requires_grad, Device device)
     : _shape(shape), _requires_grad(requires_grad), _device(device), _grad(nullptr), _ctx(nullptr), _data(nullptr) {
@@ -112,6 +112,7 @@ void Tensor::backward() {
     // 拓扑排序
     std::vector<std::shared_ptr<Tensor>> topo_order;
     std::set<Tensor*> visited;
+    
     // 使用辅助函数，方便递归调用，构建计算图
     std::function<void(Tensor*)> build_topo = 
         [&](Tensor* t) {
@@ -200,6 +201,7 @@ std::shared_ptr<Tensor> Tensor::reshape(const std::vector<size_t>& new_shape) {
 
 // 运算符重载
 std::shared_ptr<Tensor> Tensor::add(const std::shared_ptr<Tensor>& other) { 
+    
     auto func = std::make_shared<Add>();
     return func->apply({shared_from_this(), other});
 }

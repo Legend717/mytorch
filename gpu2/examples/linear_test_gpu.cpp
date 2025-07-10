@@ -19,7 +19,10 @@ std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std:
     auto diff = pred->sub(target);
     auto sq_diff = diff->mul(diff);
     auto loss = sq_diff->sum();
-    return loss->mul(Tensor::create({0.0001f}, {1})); // 用一个较小值代替除以元素数量的操作
+    
+    // 创建标量张量，并确保它和pred在同一设备上
+    auto scalar = Tensor::create({0.0001f}, {1})->to(pred->device());
+    return loss->mul(scalar);
 }
 
 int main() {
@@ -91,19 +94,17 @@ int main() {
     auto start_time = std::chrono::high_resolution_clock::now();
     for (int epoch = 0; epoch < EPOCHS; ++epoch) {
         optimizer.zero_grad();
-
-        std::cout << "333\n";
         
         auto flat_pred = model->forward(X_train);
 
-        std::cout << "forward finish!\n";
+       // std::cout << "forward finish!\n";
         
         auto loss = mse_loss(flat_pred, y_train);
 
-        std::cout << "loss finish\n";
-        std::cout << (int)loss->device() << '\n';
+        // std::cout << "loss finish\n";
+        // std::cout << (int)loss->device() << '\n';
         loss->backward();
-        std::cout << "backward finish\n";
+        // std::cout << "backward finish\n";
         optimizer.step();
 
         if ((epoch + 1) % 5 == 0) {

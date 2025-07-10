@@ -11,12 +11,7 @@ std::shared_ptr<Tensor> matmul_forward_cuda(const std::shared_ptr<Tensor>& a, co
 std::shared_ptr<Tensor> relu_forward_cuda(const std::shared_ptr<Tensor>& a);
 std::shared_ptr<Tensor> reshape_forward_cuda(const std::shared_ptr<Tensor>& input, const std::vector<size_t>& new_shape);
 std::shared_ptr<Tensor> conv2d_forward_cuda(const std::shared_ptr<Tensor>& input, const std::shared_ptr<Tensor>& weight, size_t stride, size_t padding);
-std::vector<std::shared_ptr<Tensor>> conv2d_backward_cuda(
-    const std::shared_ptr<Tensor>& grad_output,
-    const std::shared_ptr<Tensor>& input,
-    const std::shared_ptr<Tensor>& weight,
-    size_t stride, size_t padding
-);
+std::vector<std::shared_ptr<Tensor>> conv2d_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& input, const std::shared_ptr<Tensor>& weight, size_t stride, size_t padding);
 std::shared_ptr<Tensor> maxpool2d_forward_cuda(const std::shared_ptr<Tensor>& input, size_t kernel_size, size_t stride, std::vector<size_t>& max_indices);
 std::shared_ptr<Tensor> maxpool2d_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& input, const std::vector<size_t>& max_indices);
 
@@ -232,26 +227,6 @@ std::vector<std::shared_ptr<Tensor>> Conv2DFunc::_backward(const std::shared_ptr
 
     if (input->device() == Device::CUDA) {
         auto grads = conv2d_backward_cuda(grad_output, input, weight, _stride, _padding);
-        // conv2d_backward_cuda 返回 {grad_input, grad_weight, grad_bias}
-        // 我们需要返回 {grad_input, grad_weight} 因为偏置的梯度会单独处理
-        // 或者，我们需要调整以匹配 Function::_backward 的期望
-        // 假设 backward 期望 {grad_input, grad_weight, grad_bias}
-        // 如果AddFunc在forward中使用了bias, _saved_inputs会有3个元素
-        // 但Conv2D::forward中，bias是分开add的，所以ctx只保存了input和weight
-
-        // 这里的逻辑需要小心：Conv2D的forward是 conv(x,w) + b
-        // 所以计算图是 Add -> Conv2D
-        // Add的backward会产生grad_output_for_conv 和 grad_bias
-        // Conv2D的backward接收grad_output_for_conv, 产生grad_input和grad_weight
-        // 这里的grad_output实际上是Add的输出梯度
-
-        // 从我们的实现来看，conv2d_backward_cuda已经计算了所有梯度
-        // 但在 Function::backward 循环中，梯度是累加的
-        // Conv2D::forward 返回 output->add(_bias), 这意味着Add是父节点
-        // 所以这里的 grad_output 是来自Add节点的，它等于Add输出的梯度
-        // Add的backward会计算对bias的梯度
-        // 因此，Conv2DFunc::_backward只需要返回对input和weight的梯度
-
         auto grad_input = grads[0];
         auto grad_weight = grads[1];
         // 我们不需要返回grad_bias，因为它是由Add操作的上下文处理的

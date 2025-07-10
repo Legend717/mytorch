@@ -304,42 +304,36 @@ std::shared_ptr<Tensor> reshape_forward_cuda(const std::shared_ptr<Tensor>& inpu
 }
 
 std::shared_ptr<Tensor> conv2d_forward_cuda(const std::shared_ptr<Tensor>& input, const std::shared_ptr<Tensor>& weight, size_t stride, size_t padding) {
-    size_t N = input->shape()[0];
-    size_t C = input->shape()[1];
-    size_t H = input->shape()[2];
-    size_t W = input->shape()[3];
-
-    size_t K_out = weight->shape()[0];
-    size_t K_in = weight->shape()[1];
-    size_t KH = weight->shape()[2];
-    size_t KW = weight->shape()[3];
-
+    // 1. 获取输入、权重和输出的形状信息
+    size_t N = input->shape()[0], C = input->shape()[1], H = input->shape()[2], W = input->shape()[3];
+    size_t K_out = weight->shape()[0], K_in = weight->shape()[1], KH = weight->shape()[2], KW = weight->shape()[3];
     if (C != K_in) { throw std::runtime_error("Conv2D input channels and weight channels mismatch."); }
-    
     size_t H_out = (H + 2 * padding - KH) / stride + 1;
     size_t W_out = (W + 2 * padding - KW) / stride + 1;
 
     auto output = Tensor::zeros({N, K_out, H_out, W_out}, input->requires_grad(), Device::CUDA);
 
+    // 2. 为 im2col 的输出（中间矩阵）在GPU上分配内存
     size_t col_buffer_rows = C * KH * KW;
     size_t col_buffer_cols = H_out * W_out;
-
     float* col_buffer_gpu;
     CUDA_CHECK(cudaMalloc(&col_buffer_gpu, col_buffer_rows * col_buffer_cols * sizeof(float)));
 
+    // 3. 配置 GEMM (矩阵乘法) 参数
     int M = K_out;
     int K = col_buffer_rows;
     int N_gemm = col_buffer_cols;
-    
     const float alpha = 1.0f;
     const float beta = 0.0f;
     
     cublasHandle_t handle;
     CUBLAS_CHECK(cublasCreate(&handle));
 
+    // 4. 按批次（batch）处理每个图像
     for(size_t i = 0; i < N; ++i) {
         const float* input_im_ptr = static_cast<const float*>(input->data_ptr()) + i * (C * H * W);
         
+        // 4.1. 调用 im2col 核函数，将输入图像转换为列矩阵
         int num_kernels = C * H_out * W_out;
         int threads_per_block = 512;
         int blocks = (num_kernels + threads_per_block - 1) / threads_per_block;
@@ -348,6 +342,7 @@ std::shared_ptr<Tensor> conv2d_forward_cuda(const std::shared_ptr<Tensor>& input
 
         float* output_im_ptr = static_cast<float*>(output->mutable_data_ptr()) + i * (K_out * H_out * W_out);
 
+        // 4.2. 使用 cuBLAS 执行矩阵乘法: output = weight * col_buffer
         CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
                                  N_gemm, M, K,
                                  &alpha,
@@ -357,6 +352,7 @@ std::shared_ptr<Tensor> conv2d_forward_cuda(const std::shared_ptr<Tensor>& input
                                  output_im_ptr, N_gemm));
     }
     
+    // 5. 清理资源
     cublasDestroy(handle);
     CUDA_CHECK(cudaFree(col_buffer_gpu));
     
@@ -370,31 +366,40 @@ __global__ void col2im_kernel(const float* data_col, int channels, int height, i
                               int kernel_h, int kernel_w, int pad_h, int pad_w,
                               int stride_h, int stride_w,
                               int height_col, int width_col, float* data_im) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    int num_kernels = channels * height * width;
-    if (index >= num_kernels) return;
+    // ... 获取形状信息 ...
 
-    int w_im = index % width;
-    int h_im = (index / width) % height;
-    int c_im = index / (width * height);
+    auto grad_input = Tensor::zeros(input->shape(), false, Device::CUDA);
+    auto grad_weight = Tensor::zeros(weight->shape(), false, Device::CUDA);
+    auto grad_bias = Tensor::zeros({1, K_out, 1, 1}, false, Device::CUDA);
 
-    float val = 0;
-    for (int h_col = 0; h_col < height_col; ++h_col) {
-        for (int w_col = 0; w_col < width_col; ++w_col) {
-            int h_k = h_im + pad_h - h_col * stride_h;
-            int w_k = w_im + pad_w - w_col * stride_w;
-
-            if (h_k >= 0 && h_k < kernel_h && w_k >= 0 && w_k < kernel_w) {
-                 int data_col_c = c_im / (kernel_h * kernel_w);
-                 int data_col_h = h_k;
-                 int data_col_w = w_k;
-
-                 int col_index = (((data_col_c * kernel_h + data_col_h) * kernel_w + data_col_w) * height_col + h_col) * width_col + w_col;
-                 val += data_col[col_index];
-            }
-        }
+    // ... 创建 cuBLAS 句柄和分配 col_buffer ...
+    
+    // --- 1. 计算 grad_weight ---
+    for (size_t i = 0; i < N; ++i) {
+        // ...
+        // 调用 im2col
+        im2col_kernel<<</*...*/>>>(/*...*/);
+        
+        // GEMM: grad_weight += col_buffer^T * grad_output
+        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, /*...*/));
     }
-    data_im[index] = val;
+
+    // --- 2. 计算 grad_input ---
+    for (size_t i = 0; i < N; ++i) {
+        // ...
+        // GEMM: col_buffer = weight^T * grad_output
+        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, /*...*/));
+
+        // 调用 col2im 将梯度写回 grad_input
+        col2im_kernel<<</*...*/>>>(/*...*/);
+    }
+
+    // --- 3. 计算 grad_bias (通过Reduction实现) ---
+    sum_bias_kernel<<</*...*/>>>(/*...*/);
+
+    // ... 清理资源 ...
+
+    return {grad_input, grad_weight, grad_bias};
 }
 
 // Kernel to sum gradients for the bias term
