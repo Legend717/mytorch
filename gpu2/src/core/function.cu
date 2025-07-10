@@ -382,48 +382,6 @@ std::shared_ptr<Tensor> im2col_cuda(const std::shared_ptr<Tensor>& input,
     return col_tensor;
 }
 
-// ----------------------------------------------------------------------------
-// NHWC to NCHW (CUDA Kernel and Host Function)
-// ----------------------------------------------------------------------------
-
-__global__ void nhwc_to_nchw_kernel(const float* nhwc, float* nchw, int n, int h, int w, int c) {
-    int index = blockIdx.x * blockDim.x + threadIdx.x;
-    int total = n * c * h * w;
-
-    if (index < total) {
-        // Calculate NCHW coordinates from linear index
-        int w_idx = index % w;
-        int h_idx = (index / w) % h;
-        int c_idx = (index / (w * h)) % c;
-        int n_idx = index / (w * h * c);
-
-        // Calculate source index in NHWC
-        int src_idx = (n_idx * h * w * c) + (h_idx * w * c) + (w_idx * c) + c_idx;
-        nchw[index] = nhwc[src_idx];
-    }
-}
-
-std::shared_ptr<Tensor> nhwc_to_nchw_cuda(const std::shared_ptr<Tensor>& input_nhwc) {
-    const auto& shape = input_nhwc->shape(); // Should be {N, H, W, C}
-    size_t N = shape[0], H = shape[1], W = shape[2], C = shape[3];
-
-    // Create output tensor with NCHW shape
-    auto output_nchw = Tensor::zeros({N, C, H, W}, false, Device::CUDA);
-    size_t n = output_nchw->size();
-    if (n == 0) return output_nchw;
-
-    int threads = 256;
-    int blocks = (n + threads - 1) / threads;
-    
-    nhwc_to_nchw_kernel<<<blocks, threads>>>(
-        static_cast<const float*>(input_nhwc->data_ptr()),
-        static_cast<float*>(output_nchw->mutable_data_ptr()),
-        N, H, W, C
-    );
-    CUDA_CHECK(cudaPeekAtLastError());
-
-    return output_nchw;
-}
 
 __global__ void col2im_kernel(const float* data_col, float* data_im,
                             int N, int C, int H, int W,
@@ -626,4 +584,36 @@ std::shared_ptr<Tensor> maxpool2d_backward_cuda(const std::shared_ptr<Tensor>& g
     CUDA_CHECK(cudaPeekAtLastError());
 
     return grad_input;
+}
+
+__global__ void rearrange_output_kernel(const float* matmul_data, float* output_data,
+                                     int N, int C_out, int H_out, int W_out) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_elements = N * C_out * H_out * W_out;
+
+    if (index < total_elements) {
+        // 从线性索引分解出 N, C, H, W 坐标
+        int w = index % W_out;
+        int h = (index / W_out) % H_out;
+        int c = (index / (W_out * H_out)) % C_out;
+        int n = index / (W_out * H_out * C_out);
+
+        // 计算源数据 (matmul_result) 中的索引
+        // matmul_result 的形状是 [C_out, N*H_out*W_out]
+        // N*H_out*W_out 是内循环
+        int H_W_out = H_out * W_out;
+        int src_idx = c * (N * H_W_out) + n * H_W_out + h * W_out + w;
+        
+        output_data[index] = matmul_data[src_idx];
+    }
+}
+
+void rearrange_output_kernel_launcher(const float* matmul_data, float* output_data,
+                                     int N, int C_out, int H_out, int W_out) {
+    size_t n_out = N * C_out * H_out * W_out;
+    if (n_out == 0) return;
+    int threads = 256;
+    int blocks = (n_out + threads - 1) / threads;
+    rearrange_output_kernel<<<blocks, threads>>>(matmul_data, output_data, N, C_out, H_out, W_out);
+    CUDA_CHECK(cudaPeekAtLastError());
 }

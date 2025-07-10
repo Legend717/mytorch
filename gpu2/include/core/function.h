@@ -106,3 +106,5 @@ std::vector<std::shared_ptr<Tensor>> conv2d_backward_cuda( const std::shared_ptr
 );
 std::shared_ptr<Tensor> maxpool2d_forward_cuda(const std::shared_ptr<Tensor>& input, size_t kernel_size, size_t stride, std::shared_ptr<Tensor>& max_indices_tensor);
 std::shared_ptr<Tensor> maxpool2d_backward_cuda(const std::shared_ptr<Tensor>& grad_output, const std::shared_ptr<Tensor>& max_indices_tensor, const std::vector<size_t>& input_shape);
+void rearrange_output_kernel_launcher(const float* matmul_data, float* output_data,
+                                     int N, int C_out, int H_out, int W_out);

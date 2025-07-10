@@ -77,12 +77,12 @@ int main() {
     }
 
     //超参数
-    const size_t BATCH_SIZE = 64;
+    const size_t BATCH_SIZE = 64;   // 减小批次大小以适应显存
     const size_t IN_CHANNELS = 1; // 灰度图
     const size_t IMG_HEIGHT = 28;
     const size_t IMG_WIDTH = 28;
     const size_t NUM_CLASSES = 10;
-    const float LEARNING_RATE = 0.001f;
+    const float LEARNING_RATE = 0.01f;
     const int EPOCHS = 10;
     const std::string MNIST_DATA_PATH = "../data";
 
@@ -125,17 +125,14 @@ int main() {
         return 1;
     }
 
-    // ----------- 新增的关键步骤 -----------
-    // 将数据重塑为CNN所需的4D张量: (N, C, H, W)
     X_train_cpu = X_train_cpu->reshape({X_train_cpu->shape()[0], IN_CHANNELS, IMG_HEIGHT, IMG_WIDTH});
     X_test_cpu = X_test_cpu->reshape({X_test_cpu->shape()[0], IN_CHANNELS, IMG_HEIGHT, IMG_WIDTH});
-    std::cout << "数据已被重塑为4D张量，以适配CNN模型。" << std::endl;
-    // ------------------------------------
-
-    // 仅将较小的测试集移动到GPU
+    
+    // 仅移动较小的测试集
     auto X_test = X_test_cpu->to(device);
     auto y_test = y_test_cpu->to(device);
     std::cout << "数据已加载到CPU, 测试数据已移动到目标设备" << std::endl;
+    // ---------------------------------
 
     size_t num_samples = X_train_cpu->shape()[0];
     size_t num_batches = num_samples / BATCH_SIZE;
@@ -149,37 +146,38 @@ int main() {
 
     //训练
     for (int epoch = 0; epoch < EPOCHS; ++epoch) {
+        // 每个周期开始时在CPU上打乱索引
         std::vector<size_t> indices(num_samples);
         std::iota(indices.begin(), indices.end(), 0);
-        // std::shuffle(indices.begin(), indices.end(), g); // 如果需要随机化，请取消注释
+        std::shuffle(indices.begin(), indices.end(), g);
 
         float epoch_loss = 0;
 
         for (size_t i = 0; i < num_batches; ++i) {
             optimizer.zero_grad();
 
-            // 1. 从CPU上的4D完整数据中切片出小批量
+            // ----------- 主要修改点 -----------
+            // 1. 从CPU上的完整数据中切片出小批量
             auto x_batch_cpu = X_train_cpu->slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
             auto y_batch_cpu = y_train_cpu->slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
-
+            
             // 2. **仅将当前批次的数据移动到目标设备**
             auto x_batch = x_batch_cpu->to(device);
             auto y_batch = y_batch_cpu->to(device);
+            // ---------------------------------
 
-            std::cout<<1<<std::endl;
-            // 前向传播 (现在输入形状正确了)
+            // 前向传播
             auto y_pred = model->forward(x_batch);
-            std::cout<<2<<std::endl;
+
             // 计算损失
             auto loss = mse_loss(y_pred, y_batch);
-            epoch_loss += loss->item();
+            epoch_loss += loss->item(); // .item() 会自动处理设备同步
 
             // 反向传播
             loss->backward();
-            std::cout<<3<<std::endl;
+
             // 更新权重
             optimizer.step();
-            std::cout<<4<<std::endl;
         }
 
         // 在每个周期结束后，在测试集上评估模型

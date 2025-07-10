@@ -15,7 +15,7 @@ public:
 
     std::shared_ptr<Tensor> forward(std::shared_ptr<Tensor> input) override;
     std::vector<std::shared_ptr<Tensor>> parameters() override;
-    void to(Device device) override {}
+    void to(Device device) override;
 };
 
 } // namespace nn

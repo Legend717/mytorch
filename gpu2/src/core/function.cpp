@@ -37,6 +37,7 @@ void Function::release_saved_inputs() {
 
 // 加法
 std::shared_ptr<Tensor> Add::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Add"<<"\n";
     if (inputs[0]->device() == Device::CUDA) {
         return add_forward_cuda(inputs[0], inputs[1]);
     }
@@ -107,6 +108,7 @@ std::vector<std::shared_ptr<Tensor>> Add::_backward(const std::shared_ptr<Tensor
 
 // 减法，暂不考虑广播情况
 std::shared_ptr<Tensor> Sub::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Sub"<<"\n";
     if (inputs[0]->device() == Device::CUDA) {
         // Create a tensor of -1s and multiply
         auto neg_b = inputs[1]->mul(Tensor::create({-1.0f}, {1}, false)->to(Device::CUDA));
@@ -131,6 +133,7 @@ std::vector<std::shared_ptr<Tensor>> Sub::_backward(const std::shared_ptr<Tensor
 
 // 乘法（逐位）
 std::shared_ptr<Tensor> Mul::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Mul"<<"\n";
     if (inputs[0]->device() == Device::CUDA) {
         return mul_forward_cuda(inputs[0], inputs[1]);
     }
@@ -154,6 +157,7 @@ std::vector<std::shared_ptr<Tensor>> Mul::_backward(const std::shared_ptr<Tensor
 
 // 矩阵乘法
 std::shared_ptr<Tensor> MatMul::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"MatMul"<<"\n";
     if (inputs[0]->device() == Device::CUDA) {
         return matmul_forward_cuda(inputs[0], inputs[1]);
     }
@@ -190,6 +194,7 @@ std::vector<std::shared_ptr<Tensor>> MatMul::_backward(const std::shared_ptr<Ten
 
 // 求和
 std::shared_ptr<Tensor> Sum::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Sum"<<"\n";
     const auto& x = inputs[0];
     if (x->device() == Device::CUDA) {
         // Placeholder for a proper CUDA reduction kernel
@@ -234,6 +239,7 @@ std::vector<std::shared_ptr<Tensor>> Sum::_backward(const std::shared_ptr<Tensor
 
 // ReLU
 std::shared_ptr<Tensor> ReLUFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Relu"<<"\n";
     if (inputs[0]->device() == Device::CUDA) {
         return relu_forward_cuda(inputs[0]);
     }
@@ -266,6 +272,7 @@ std::vector<std::shared_ptr<Tensor>> ReLUFunc::_backward(const std::shared_ptr<T
 
 // Reshape
 std::shared_ptr<Tensor> ReshapeFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Reshape"<<"\n";
     auto input = inputs[0];
     if (input->device() == Device::CUDA) {
         return reshape_forward_cuda(input, _new_shape);
@@ -281,6 +288,7 @@ std::vector<std::shared_ptr<Tensor>> ReshapeFunc::_backward(const std::shared_pt
 
 // Conv2DFunc
 std::shared_ptr<Tensor> Conv2DFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"Conv2D"<<"\n";
     auto input = inputs[0];
     auto weight = inputs[1];
 
@@ -298,19 +306,29 @@ std::shared_ptr<Tensor> Conv2DFunc::_forward(const std::vector<std::shared_ptr<T
         auto col = im2col_cuda(input, kH, _stride, _padding); // Shape: (C_in*kH*kW, N*H_out*W_out)
 
         // 2. Reshape weights for matrix multiplication
-        // Original shape: (C_out, C_in, kH, kW)
-        // Target shape: (C_out, C_in*kH*kW)
         auto reshaped_weight = weight->reshape({C_out, C_in * kH * kW});
 
         // 3. Perform matrix multiplication
         auto matmul_result = reshaped_weight->matmul(col); // Shape: (C_out, N*H_out*W_out)
 
-        // 4. Reshape and transpose the result to get final output
-        auto transposed_res = matmul_result->transpose(); // Shape: (N*H_out*W_out, C_out)
-        // Then reshape to (N, H_out, W_out, C_out) which is NHWC format
-        auto output_nhwc = transposed_res->reshape({N, H_out, W_out, C_out});
-        // Finally, convert NHWC to NCHW
-        return nhwc_to_nchw_cuda(output_nhwc);
+        // ----------- START: 高效的重排实现 -----------
+        // 4. 创建最终的输出张量
+        auto output = Tensor::zeros({N, C_out, H_out, W_out}, false, Device::CUDA);
+        size_t n_out = output->size();
+
+        if (n_out > 0) {
+            int threads = 256;
+            int blocks = (n_out + threads - 1) / threads;
+            
+            // 5. 调用新的内核，一次性完成数据重排
+            rearrange_output_kernel_launcher(
+                static_cast<const float*>(matmul_result->data_ptr()),
+                static_cast<float*>(output->mutable_data_ptr()),
+                N, C_out, H_out, W_out
+            );
+        }
+        
+        return output;
     }
 
     // CPU implementation using im2col
@@ -423,6 +441,7 @@ std::vector<std::shared_ptr<Tensor>> Conv2DFunc::_backward(const std::shared_ptr
 
 // MaxPool2DFunc
 std::shared_ptr<Tensor> MaxPool2DFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    //std::cout<<"MaxPool"<<"\n";
     auto input = inputs[0];
 
     // GPU implementation

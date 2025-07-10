@@ -28,6 +28,11 @@ std::shared_ptr<Tensor> Conv2D::forward(std::shared_ptr<Tensor> input) {
     return conv_func->apply({input, _weight});
 }
 
+void Conv2D::to(Device device) {
+    if (_weight) {
+        _weight = _weight->to(device);
+    }
+}
 
 std::vector<std::shared_ptr<Tensor>> Conv2D::parameters() {
     return {_weight};
