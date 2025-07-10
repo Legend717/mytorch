@@ -153,6 +153,8 @@ void Tensor::backward() {
                     }
                 }
             }
+
+            t->ctx()->release_saved_inputs();
         }
     }
 

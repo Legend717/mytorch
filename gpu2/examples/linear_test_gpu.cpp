@@ -26,7 +26,7 @@ std::shared_ptr<Tensor> mse_loss(const std::shared_ptr<Tensor>& pred, const std:
 }
 
 int main() {
-    // 0. 设置设备
+    //设置设备
     Device device = Device::CUDA;
     int device_count = 0;
     cudaGetDeviceCount(&device_count);
@@ -39,17 +39,14 @@ int main() {
     }
     // device = Device::CPU;
 
-    // 1. 定义超参数
+    //超参数
     const size_t SEQ_LEN = 1000;     // 输入序列长度
     const size_t PRED_LEN = 200;    // 预测长度
     const size_t HIDDEN_DIM = 640;  // 隐藏层维度（简化网络）
     const float LEARNING_RATE = 0.01f;
     const int EPOCHS = 100;
 
-    // 设置 OpenMP 并行数
-    omp_set_num_threads(8);
-
-    // 2. 简化模型结构
+    //模型
     auto model = std::make_shared<nn::Sequential>(
         std::vector<std::shared_ptr<nn::Module>>{
             // std::make_shared<nn::Flatten>(), 
@@ -62,10 +59,9 @@ int main() {
     model->to(device);
     std::cout << "模型成功加载到设备" << std::endl;
 
-    // 3. 创建优化器
+    //创建优化器
     optim::SGD optimizer(model->parameters(), LEARNING_RATE);
 
-    // 4. 创建实际数据
     std::vector<float> X_train_data;
     std::vector<float> y_train_data;
     for (size_t i = 0; i < SEQ_LEN; i++) {

@@ -17,6 +17,8 @@
 #include "nn/flatten.h" // 引入 Flatten 层
 #include "optim/sgd.h"
 #include "loader/mnist_loader.h"
+#include "nn/conv.h"
+#include "nn/pool.h"
 
 // 辅助函数：计算准确率
 // 将GPU上的Tensor传回CPU计算
@@ -24,7 +26,7 @@ float calculate_accuracy(const std::shared_ptr<Tensor>& pred, const std::shared_
     // 安全地将数据从GPU拷贝到CPU
     auto pred_data = pred->data_cpu();
     auto target_data = target->data_cpu();
-    
+
     const auto& shape = pred->shape();
     size_t batch_size = shape[0];
     size_t num_classes = shape[1];
@@ -75,20 +77,34 @@ int main() {
     }
 
     //超参数
-    const size_t INPUT_FEATURES = 784;    // 28x28
-    const size_t HIDDEN_FEATURES = 128;   // 增加隐藏层神经元数量
-    const size_t OUTPUT_CLASSES = 10;
-    const float LEARNING_RATE = 0.05f;    // 调整学习率
+    const size_t BATCH_SIZE = 64;
+    const size_t IN_CHANNELS = 1; // 灰度图
+    const size_t IMG_HEIGHT = 28;
+    const size_t IMG_WIDTH = 28;
+    const size_t NUM_CLASSES = 10;
+    const float LEARNING_RATE = 0.001f;
     const int EPOCHS = 10;
-    const size_t BATCH_SIZE = 256;        // 增大大批次大小以利用GPU
     const std::string MNIST_DATA_PATH = "../data";
 
     //定义模型
     auto model = std::make_shared<nn::Sequential>(
         std::vector<std::shared_ptr<nn::Module>>{
-            std::make_shared<nn::Linear>(INPUT_FEATURES, HIDDEN_FEATURES),
+            // 输入: [B, 1, 28, 28]
+            std::make_shared<nn::Conv2D>(IN_CHANNELS, 6, 5), // -> [B, 6, 24, 24]
             std::make_shared<nn::ReLU>(),
-            std::make_shared<nn::Linear>(HIDDEN_FEATURES, OUTPUT_CLASSES)
+            std::make_shared<nn::MaxPool2D>(2, 2),          // -> [B, 6, 12, 12]
+
+            std::make_shared<nn::Conv2D>(6, 16, 5),         // -> [B, 16, 8, 8]
+            std::make_shared<nn::ReLU>(),
+            std::make_shared<nn::MaxPool2D>(2, 2),          // -> [B, 16, 4, 4]
+
+            std::make_shared<nn::Flatten>(),                // -> [B, 16*4*4] = [B, 256]
+
+            std::make_shared<nn::Linear>(16 * 4 * 4, 120),  // -> [B, 120]
+            std::make_shared<nn::ReLU>(),
+            std::make_shared<nn::Linear>(120, 84),          // -> [B, 84]
+            std::make_shared<nn::ReLU>(),
+            std::make_shared<nn::Linear>(84, NUM_CLASSES)   // -> [B, 10]
         }
     );
 
@@ -109,14 +125,19 @@ int main() {
         return 1;
     }
 
-    //将数据移动到目标设备！
-    auto X_train = X_train_cpu->to(device);
-    auto y_train = y_train_cpu->to(device);
+    // ----------- 新增的关键步骤 -----------
+    // 将数据重塑为CNN所需的4D张量: (N, C, H, W)
+    X_train_cpu = X_train_cpu->reshape({X_train_cpu->shape()[0], IN_CHANNELS, IMG_HEIGHT, IMG_WIDTH});
+    X_test_cpu = X_test_cpu->reshape({X_test_cpu->shape()[0], IN_CHANNELS, IMG_HEIGHT, IMG_WIDTH});
+    std::cout << "数据已被重塑为4D张量，以适配CNN模型。" << std::endl;
+    // ------------------------------------
+
+    // 仅将较小的测试集移动到GPU
     auto X_test = X_test_cpu->to(device);
     auto y_test = y_test_cpu->to(device);
-    std::cout << "数据成功加载到设备" << std::endl;
+    std::cout << "数据已加载到CPU, 测试数据已移动到目标设备" << std::endl;
 
-    size_t num_samples = X_train->shape()[0];
+    size_t num_samples = X_train_cpu->shape()[0];
     size_t num_batches = num_samples / BATCH_SIZE;
 
     //用于打乱数据的随机数生成器
@@ -128,46 +149,45 @@ int main() {
 
     //训练
     for (int epoch = 0; epoch < EPOCHS; ++epoch) {
-        // 每个周期开始时在CPU上打乱索引
         std::vector<size_t> indices(num_samples);
         std::iota(indices.begin(), indices.end(), 0);
-        std::shuffle(indices.begin(), indices.end(), g);
+        // std::shuffle(indices.begin(), indices.end(), g); // 如果需要随机化，请取消注释
 
         float epoch_loss = 0;
-        
+
         for (size_t i = 0; i < num_batches; ++i) {
             optimizer.zero_grad();
 
-            // 在CPU上准备小批量数据的索引
-            std::vector<size_t> batch_indices(BATCH_SIZE);
-            for(size_t j = 0; j < BATCH_SIZE; ++j) {
-                batch_indices[j] = indices[i * BATCH_SIZE + j];
-            }
-            
-            // 从GPU上的完整数据中切片出小批量 (此操作也在GPU上)
-            auto x_batch = X_train->slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
-            auto y_batch = y_train->slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+            // 1. 从CPU上的4D完整数据中切片出小批量
+            auto x_batch_cpu = X_train_cpu->slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+            auto y_batch_cpu = y_train_cpu->slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
 
-            // 前向传播
+            // 2. **仅将当前批次的数据移动到目标设备**
+            auto x_batch = x_batch_cpu->to(device);
+            auto y_batch = y_batch_cpu->to(device);
+
+            std::cout<<1<<std::endl;
+            // 前向传播 (现在输入形状正确了)
             auto y_pred = model->forward(x_batch);
-
+            std::cout<<2<<std::endl;
             // 计算损失
             auto loss = mse_loss(y_pred, y_batch);
-            epoch_loss += loss->item(); // .item() 会自动处理设备同步
+            epoch_loss += loss->item();
 
             // 反向传播
             loss->backward();
-
+            std::cout<<3<<std::endl;
             // 更新权重
             optimizer.step();
+            std::cout<<4<<std::endl;
         }
 
         // 在每个周期结束后，在测试集上评估模型
         auto y_pred_test = model->forward(X_test);
         float test_accuracy = calculate_accuracy(y_pred_test, y_test);
 
-        std::cout << "周期 [" << epoch + 1 << "/" << EPOCHS 
-                  << "], 平均损失: " << epoch_loss / num_batches 
+        std::cout << "周期 [" << epoch + 1 << "/" << EPOCHS
+                  << "], 平均损失: " << epoch_loss / num_batches
                   << ", 测试集准确率: " << test_accuracy * 100.0f << "%" << std::endl;
     }
 

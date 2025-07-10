@@ -31,6 +31,10 @@ std::vector<std::shared_ptr<Tensor>> Function::backward(const std::shared_ptr<Te
     return _backward(grad_output);
 }
 
+void Function::release_saved_inputs() {
+    _saved_inputs.clear(); // <-- 清空保存的输入
+}
+
 // 加法
 std::shared_ptr<Tensor> Add::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
     if (inputs[0]->device() == Device::CUDA) {
@@ -244,18 +248,21 @@ std::shared_ptr<Tensor> ReLUFunc::_forward(const std::vector<std::shared_ptr<Ten
 
 std::vector<std::shared_ptr<Tensor>> ReLUFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
     //std::cout<<"ReLUFunc_backward begin"<<std::endl;
-    const auto& x = _saved_inputs[0]->data_cpu();
-    auto x_device = _saved_inputs[0]->device();
-    std::vector<float> mask_data(x.size());
+    auto x = _saved_inputs[0];
+    if (x->device() == Device::CUDA) {
+        return {relu_backward_cuda(grad_output, x)};
+    }
+
+    const auto& x_data = x->data_cpu();
+    std::vector<float> mask_data(x_data.size());
     // ReLU的梯度是0或1
     #pragma omp parallel for
-    for(size_t i = 0; i < x.size(); ++i) {
-        mask_data[i] = x[i] > 0 ? 1.0f : 0.0f;
+    for(size_t i = 0; i < x_data.size(); ++i) {
+        mask_data[i] = x_data[i] > 0 ? 1.0f : 0.0f;
     }
-    auto mask = Tensor::create(mask_data, _saved_inputs[0]->shape())->to(x_device);
+    auto mask = Tensor::create(mask_data, x->shape())->to(x->device());
     return {grad_output->mul(mask)};
 }
-
 
 // Reshape
 std::shared_ptr<Tensor> ReshapeFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
@@ -270,4 +277,233 @@ std::vector<std::shared_ptr<Tensor>> ReshapeFunc::_backward(const std::shared_pt
     //std::cout<<"Reshape_backward begin"<<std::endl;
     auto original_shape = _saved_inputs[0]->shape();
     return { grad_output->reshape(original_shape) };
+}
+
+// Conv2DFunc
+std::shared_ptr<Tensor> Conv2DFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    auto input = inputs[0];
+    auto weight = inputs[1];
+
+    const auto& input_shape = input->shape();
+    const auto& weight_shape = weight->shape();
+    size_t N = input_shape[0], C_in = input_shape[1], H_in = input_shape[2], W_in = input_shape[3];
+    size_t C_out = weight_shape[0], kH = weight_shape[2], kW = weight_shape[3];
+
+    size_t H_out = (H_in + 2 * _padding - kH) / _stride + 1;
+    size_t W_out = (W_in + 2 * _padding - kW) / _stride + 1;
+
+    // GPU implementation using im2col
+    if (input->device() == Device::CUDA) {
+        // 1. Transform input tensor to column matrix
+        auto col = im2col_cuda(input, kH, _stride, _padding); // Shape: (C_in*kH*kW, N*H_out*W_out)
+
+        // 2. Reshape weights for matrix multiplication
+        // Original shape: (C_out, C_in, kH, kW)
+        // Target shape: (C_out, C_in*kH*kW)
+        auto reshaped_weight = weight->reshape({C_out, C_in * kH * kW});
+
+        // 3. Perform matrix multiplication
+        auto matmul_result = reshaped_weight->matmul(col); // Shape: (C_out, N*H_out*W_out)
+
+        // 4. Reshape and transpose the result to get final output
+        auto transposed_res = matmul_result->transpose(); // Shape: (N*H_out*W_out, C_out)
+        // Then reshape to (N, H_out, W_out, C_out) which is NHWC format
+        auto output_nhwc = transposed_res->reshape({N, H_out, W_out, C_out});
+        // Finally, convert NHWC to NCHW
+        return nhwc_to_nchw_cuda(output_nhwc);
+    }
+
+    // CPU implementation using im2col
+    else {
+        std::vector<float> output_data(N * C_out * H_out * W_out, 0.0f);
+        const auto& input_data = input->data_cpu();
+        const auto& weight_data = weight->data_cpu();
+
+        #pragma omp parallel for
+        for (size_t n = 0; n < N; ++n) {
+            for (size_t c_out = 0; c_out < C_out; ++c_out) {
+                for (size_t h_out = 0; h_out < H_out; ++h_out) {
+                    for (size_t w_out = 0; w_out < W_out; ++w_out) {
+                        float acc = 0.0f;
+                        for (size_t c_in = 0; c_in < C_in; ++c_in) {
+                            for (size_t kh = 0; kh < kH; ++kh) {
+                                for (size_t kw = 0; kw < kW; ++kw) {
+                                    int h_in = h_out * _stride - _padding + kh;
+                                    int w_in = w_out * _stride - _padding + kw;
+                                    if (h_in >= 0 && h_in < H_in && w_in >= 0 && w_in < W_in) {
+                                        float in_val = input_data[n*C_in*H_in*W_in + c_in*H_in*W_in + h_in*W_in + w_in];
+                                        float w_val = weight_data[c_out*C_in*kH*kW + c_in*kH*kW + kh*kW + kw];
+                                        acc += in_val * w_val;
+                                    }
+                                }
+                            }
+                        }
+                        output_data[n*C_out*H_out*W_out + c_out*H_out*W_out + h_out*W_out + w_out] = acc;
+                    }
+                }
+            }
+        }
+        return Tensor::create(output_data, {N, C_out, H_out, W_out});
+    }
+}
+
+std::vector<std::shared_ptr<Tensor>> Conv2DFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    const auto& input = _saved_inputs[0];
+    const auto& weight = _saved_inputs[1];
+
+    // --- GPU Implementation ---
+    if (grad_output->device() == Device::CUDA) {
+        return conv2d_backward_cuda(grad_output, input, weight, _stride, _padding);
+    }
+
+    // --- CPU Implementation ---
+    const auto& in_shape = input->shape();
+    const auto& w_shape = weight->shape();
+    const auto& grad_out_shape = grad_output->shape();
+    size_t N = in_shape[0];
+    size_t C_in = in_shape[1];
+    size_t H_in = in_shape[2];
+    size_t W_in = in_shape[3];
+    size_t C_out = w_shape[0];
+    size_t H_w = w_shape[2];
+    size_t W_w = w_shape[3];
+    size_t H_out = grad_out_shape[2];
+    size_t W_out = grad_out_shape[3];
+
+    // 初始化梯度张量
+    auto grad_input_tensor = Tensor::zeros(in_shape, false);
+    auto grad_weight_tensor = Tensor::zeros(w_shape, false);
+
+    // 获取可变数据指针
+    auto grad_input_data = static_cast<std::vector<float>*>(grad_input_tensor->mutable_data_ptr());
+    auto grad_weight_data = static_cast<std::vector<float>*>(grad_weight_tensor->mutable_data_ptr());
+
+    // 获取常量数据
+    const auto& input_data = input->data_cpu();
+    const auto& weight_data = weight->data_cpu();
+    const auto& grad_output_data = grad_output->data_cpu();
+
+    #pragma omp parallel for
+    for (size_t n = 0; n < N; ++n) {
+        for (size_t c_out = 0; c_out < C_out; ++c_out) {
+            for (size_t h_out = 0; h_out < H_out; ++h_out) {
+                for (size_t w_out = 0; w_out < W_out; ++w_out) {
+                    
+                    size_t grad_out_idx = n * (C_out * H_out * W_out) + c_out * (H_out * W_out) + h_out * W_out + w_out;
+                    float grad_out_val = grad_output_data[grad_out_idx];
+
+                    if (grad_out_val == 0.0f) continue;
+
+                    for (size_t c_in = 0; c_in < C_in; ++c_in) {
+                        for (size_t kh = 0; kh < H_w; ++kh) {
+                            for (size_t kw = 0; kw < W_w; ++kw) {
+                                int h_in_idx_int = static_cast<int>(h_out * _stride) - _padding + kh;
+                                int w_in_idx_int = static_cast<int>(w_out * _stride) - _padding + kw;
+
+                                if (h_in_idx_int >= 0 && h_in_idx_int < H_in && w_in_idx_int >= 0 && w_in_idx_int < W_in) {
+                                    
+                                    size_t input_idx = n * (C_in * H_in * W_in) + c_in * (H_in * W_in) + h_in_idx_int * W_in + w_in_idx_int;
+                                    size_t weight_idx = c_out * (C_in * H_w * W_w) + c_in * (H_w * W_w) + kh * W_w + kw;
+                                    
+                                    #pragma omp atomic
+                                    (*grad_weight_data)[weight_idx] += grad_out_val * input_data[input_idx];
+                                    
+                                    #pragma omp atomic
+                                    (*grad_input_data)[input_idx] += grad_out_val * weight_data[weight_idx];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return {grad_input_tensor, grad_weight_tensor};
+}
+
+// MaxPool2DFunc
+std::shared_ptr<Tensor> MaxPool2DFunc::_forward(const std::vector<std::shared_ptr<Tensor>>& inputs) {
+    auto input = inputs[0];
+
+    // GPU implementation
+    if (input->device() == Device::CUDA) {
+        // Pass the tensor meant for CUDA, not the std::vector
+        return maxpool2d_forward_cuda(input, _kernel_size, _stride, _max_indices_tensor);
+    }
+
+    // CPU implementation
+    const auto& in_shape = input->shape();
+    const size_t N = in_shape[0], C = in_shape[1], H_in = in_shape[2], W_in = in_shape[3];
+
+    const size_t H_out = (H_in - _kernel_size) / _stride + 1;
+    const size_t W_out = (W_in - _kernel_size) / _stride + 1;
+    const std::vector<size_t> out_shape = {N, C, H_out, W_out};
+
+    // Initialize output tensor and resize the CPU indices vector
+    auto output = Tensor::zeros(out_shape, false);
+    _max_indices.resize(N * C * H_out * W_out);
+
+    // Use the correct methods to access data on the CPU
+    const auto& input_data = input->data_cpu();
+    auto output_data_vec = static_cast<std::vector<float>*>(output->mutable_data_ptr());
+
+    // Loop for calculation
+    #pragma omp parallel for
+    for (int i = 0; i < N * C; ++i) {
+        int n = i / C;
+        int c = i % C;
+        for (size_t h_out = 0; h_out < H_out; ++h_out) {
+            for (size_t w_out = 0; w_out < W_out; ++w_out) {
+
+                float max_val = -std::numeric_limits<float>::infinity();
+                size_t max_idx = 0;
+
+                for (size_t kh = 0; kh < _kernel_size; ++kh) {
+                    for (size_t kw = 0; kw < _kernel_size; ++kw) {
+                        size_t h_in = h_out * _stride + kh;
+                        size_t w_in = w_out * _stride + kw;
+                        size_t in_idx = n * (C * H_in * W_in) + c * (H_in * W_in) + h_in * W_in + w_in;
+
+                        if (input_data[in_idx] > max_val) {
+                            max_val = input_data[in_idx];
+                            max_idx = in_idx;
+                        }
+                    }
+                }
+
+                size_t out_idx = n * (C * H_out * W_out) + c * (H_out * W_out) + h_out * W_out + w_out;
+
+                (*output_data_vec)[out_idx] = max_val;
+                _max_indices[out_idx] = max_idx;
+            }
+        }
+    }
+
+    return output;
+}
+
+std::vector<std::shared_ptr<Tensor>> MaxPool2DFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
+    auto input = _saved_inputs[0];
+
+    // GPU implementation
+    if (grad_output->device() == Device::CUDA) {
+        // Pass the tensor meant for CUDA
+        return {maxpool2d_backward_cuda(grad_output, _max_indices_tensor, input->shape())};
+    }
+
+    // CPU implementation
+    const auto& in_shape = input->shape();
+    auto grad_input = Tensor::zeros(in_shape, false);
+
+    // Use the correct methods to access data
+    const auto& grad_output_data = grad_output->data_cpu();
+    auto grad_input_data_vec = static_cast<std::vector<float>*>(grad_input->mutable_data_ptr());
+
+    // Use _max_indices to route gradients
+    for (size_t i = 0; i < grad_output_data.size(); ++i) {
+        size_t max_idx = _max_indices[i];
+        (*grad_input_data_vec)[max_idx] += grad_output_data[i];
+    }
+
+    return {grad_input};
 }

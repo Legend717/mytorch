@@ -155,6 +155,43 @@ mnist_test/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/mnist_test.dir/build.make CMakeFiles/mnist_test.dir/build
 .PHONY : mnist_test/fast
 
+#=============================================================================
+# Target rules for targets named cnn_test
+
+# Build rule for target.
+cnn_test: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 cnn_test
+.PHONY : cnn_test
+
+# fast build rule for target.
+cnn_test/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cnn_test.dir/build.make CMakeFiles/cnn_test.dir/build
+.PHONY : cnn_test/fast
+
+examples/cnn_test.o: examples/cnn_test.cpp.o
+.PHONY : examples/cnn_test.o
+
+# target to build an object file
+examples/cnn_test.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cnn_test.dir/build.make CMakeFiles/cnn_test.dir/examples/cnn_test.cpp.o
+.PHONY : examples/cnn_test.cpp.o
+
+examples/cnn_test.i: examples/cnn_test.cpp.i
+.PHONY : examples/cnn_test.i
+
+# target to preprocess a source file
+examples/cnn_test.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cnn_test.dir/build.make CMakeFiles/cnn_test.dir/examples/cnn_test.cpp.i
+.PHONY : examples/cnn_test.cpp.i
+
+examples/cnn_test.s: examples/cnn_test.cpp.s
+.PHONY : examples/cnn_test.s
+
+# target to generate assembly for a file
+examples/cnn_test.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/cnn_test.dir/build.make CMakeFiles/cnn_test.dir/examples/cnn_test.cpp.s
+.PHONY : examples/cnn_test.cpp.s
+
 examples/linear_test_gpu.o: examples/linear_test_gpu.cpp.o
 .PHONY : examples/linear_test_gpu.o
 
@@ -475,9 +512,13 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... cnn_test"
 	@echo "... linear_test_gpu"
 	@echo "... mnist_test"
 	@echo "... mytorch"
+	@echo "... examples/cnn_test.o"
+	@echo "... examples/cnn_test.i"
+	@echo "... examples/cnn_test.s"
 	@echo "... examples/linear_test_gpu.o"
 	@echo "... examples/linear_test_gpu.i"
 	@echo "... examples/linear_test_gpu.s"
