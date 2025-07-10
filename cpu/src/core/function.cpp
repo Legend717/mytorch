@@ -380,9 +380,7 @@ std::vector<std::shared_ptr<Tensor>> ReshapeFunc::_backward(const std::shared_pt
 
 namespace py = pybind11;
 
-//TODO: tensoe to numpy 和 numpy to tensor 的转换函数需要实现:
-// 假设 Tensor::data() 返回 const std::vector<float>&，Tensor::shape() 返回 const std::vector<size_t>&
-// 转为 numpy（zero-copy）
+//TODO: tensor to numpy 和 numpy to tensor 的转换函数需要实现:
 py::array_t<float> tensor_to_numpy(const std::shared_ptr<Tensor>& t) {
     std::vector<ssize_t> shape(t->shape().begin(), t->shape().end());
     return py::array_t<float>(
@@ -404,15 +402,13 @@ std::shared_ptr<Tensor> FlashAttenFunc::_forward(const std::vector<std::shared_p
     if (inputs.size() < 3) {
         throw std::runtime_error("FlashAttentionFunc requires at least 3 inputs: Q, K, V");
     }
-
     try {
         py::gil_scoped_acquire gil;  // ⬅️ 保证持有 GIL
 
         auto& Q = inputs[0];
         auto& K = inputs[1];
         auto& V = inputs[2];
-
-        auto O = Tensor::zeros(Q->shape(), false);
+        auto O = Tensor::zeros(Q->shape(), false); 
         auto L = Tensor::zeros({Q->shape()[0] * Q->shape()[1], Q->shape()[2]}, false);
 
         // 只初始化一次 Python 模块和函数
@@ -426,45 +422,96 @@ std::shared_ptr<Tensor> FlashAttenFunc::_forward(const std::vector<std::shared_p
         py::object py_v = tensor_to_numpy(V);
         py::object py_o = tensor_to_numpy(O);
         py::object py_l = tensor_to_numpy(L);
-
-        // Python 参数
         py::bool_ _causal = this->_causal;
         py::float_ _sm_scale = this->_sm_scale;
 
-        // 调用 Python 函数
-        printf("%d\n", 436);
+
         py::object py_result = attn.attr("attention")(py_q, py_k, py_v, py_o, py_l, _causal, _sm_scale);
 
         // 解析返回值
         py::tuple py_tuple = py_result.cast<py::tuple>();
         py::tuple py_grid = py_tuple[2];
         py::int_ py_block_dmodel = py_tuple[3];
+        py::object py_o_result = py_tuple[0]; // O
+        py::object py_l_result = py_tuple[1]; // L
 
-        // 保存 ctx 信息用于反向传播
-        this->_saved_inputs.push_back(O);
-        this->_saved_inputs.push_back(L);
+        
         this->_block_dmodel = py_block_dmodel.cast<int>();
         this->_grid[0] = py_grid[0].cast<int>();
         this->_grid[1] = py_grid[1].cast<int>();
         this->_grid[2] = py_grid[2].cast<int>();
-
-        return O;
+        auto c_result_o = numpy_to_tensor(py_o_result.cast<py::array_t<float>>());
+        auto c_result_l = numpy_to_tensor(py_l_result.cast<py::array_t<float>>());
+        this-> saved_o = c_result_o;
+        this-> saved_l = c_result_l;
+        // printf("FlashAttentionFunc forward saved inputs size: %zu\n", _saved_inputs.size());
+        //输出所有的saved input的size
+        // for (size_t i = 0; i < _saved_inputs.size(); ++i) {
+        //     printf("saved input[%zu] shape: ", i);
+        //     for (auto dim : _saved_inputs[i]->shape()) {
+        //         printf("%zu ", dim);
+        //     }
+        //     printf("\n");
+        // }
+        // printf("save grad bool %s\n", _saved_inputs[0]->requires_grad() ? "true" : "false");
+        return c_result_o;
     } catch (const py::error_already_set& e) {
         throw std::runtime_error("Error in FlashAttentionFunc: " + std::string(e.what()));
     }
 }
 
+void show10_tensor(std::shared_ptr<Tensor> t) {
+    for (size_t i = 0; i < std::min(10UZ, t->data().size()); ++i) {
+        printf("tensor[%zu] = %f\n", i, t->data()[i]);
+    }
+}
 
-// flash-attn.cpp
 
 std::vector<std::shared_ptr<Tensor>> FlashAttenFunc::_backward(const std::shared_ptr<Tensor>& grad_output) {
-    // 占位实现：返回与输入形状一致的零梯度张量
-    std::vector<std::shared_ptr<Tensor>> grads;
+    printf("cpp backwarding \n");
+    // for(auto &t : _saved_inputs) {
+    //     show10_tensor(t);
+    // }
+    auto d_q = Tensor::zeros(grad_output->shape(), false);
+    auto d_k = Tensor::zeros(grad_output->shape(), false);
+    auto d_v = Tensor::zeros(grad_output->shape(), false);
 
-    for (const auto& saved_input : this->_saved_inputs) {
-        auto zero_grad = Tensor::zeros(saved_input->shape(), false);
-        grads.push_back(zero_grad);
-    }
+    py::gil_scoped_acquire gil;  // ⬅️ 保证持有 GIL
+    // 1. 获取输入张量
+    py::object py_q = tensor_to_numpy(_saved_inputs[0]);
+    py::object py_k = tensor_to_numpy(_saved_inputs[1]);
+    py::object py_v = tensor_to_numpy(_saved_inputs[2]);
+    py::object py_o = tensor_to_numpy(this->saved_o);
+    py::object py_l = tensor_to_numpy(this->saved_l);
+    py::object py_grad = tensor_to_numpy(grad_output);
+    py::bool_ _causal = this->_causal;
+    py::float_ _sm_scale = this->_sm_scale;
+    py::int_ py_block_dmodel = this->_block_dmodel;
+    py::int_ py_grid0 = this->_grid[0];
+    py::int_ py_grid1 = this->_grid[1];
+    py::int_ py_grid2 = this->_grid[2];
+    py::object py_dq = tensor_to_numpy(d_q);
+    py::object py_dk = tensor_to_numpy(d_k);
+    py::object py_dv = tensor_to_numpy(d_v);
 
-    return grads;
+    //call python srcipt backward
+    py::module_ attn = py::module_::import("flash_attn");
+    py::object py_result = attn.attr("backward")(py_dq, py_dk, py_dv, py_grad,
+        py_q, py_k, py_v, py_o, py_l, 
+        py_grid0, py_grid1, py_grid2, py_block_dmodel, _causal, _sm_scale
+    );
+    // 2. 解析返回值
+    py::tuple py_tuple = py_result.cast<py::tuple>();
+    //3 转换为Tensor
+    std::shared_ptr<Tensor> grad_q = numpy_to_tensor(py_tuple[0].cast<py::array_t<float>>());
+    std::shared_ptr<Tensor> grad_k = numpy_to_tensor(py_tuple[1].cast<py::array_t<float>>());
+    std::shared_ptr<Tensor> grad_v = numpy_to_tensor(py_tuple[2].cast<py::array_t<float>>());
+
+    //check 10 ele from grad_q
+    // for (size_t i = 0; i < std::min(10UL, grad_q->data().size()); ++i) {
+    //     printf("grad_q[%zu] = %f\n", i, grad_q->data()[i]);
+    // }
+    // printf("transform is done!\n");
+    // 4. 返回梯度列表
+    return {grad_q, grad_k, grad_v};
 }

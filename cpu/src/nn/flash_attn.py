@@ -222,86 +222,96 @@ def _bwd_kernel(
 empty = torch.empty(128, device="cuda")
 
 
-class _attention(torch.autograd.Function):
 
-    @staticmethod
-    def forward(ctx, q, k, v, o, L, causal, sm_scale):
-        print("Forward attention with causal:", causal, "sm_scale:", sm_scale)
-        print("Q shape:", q.shape, "K shape:", k.shape, "V shape:", v.shape, "O shape:", o.shape, "L shape:", L.shape)
-        # shape constraints
-        Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
-        # chang input from numpy to torch
-        q_torch = torch.tensor(np.array(q, dtype=np.float32, copy=True), device='cuda')
-        k_torch = torch.tensor(np.array(k, dtype=np.float32, copy=True), device='cuda')
-        v_torch = torch.tensor(np.array(v, dtype=np.float32, copy=True), device='cuda')
-        o_torch = torch.tensor(np.array(o, dtype=np.float32, copy=True), device='cuda')
-        L_torch = torch.tensor(np.array(L, dtype=np.float32, copy=True), device='cuda')
-
-        
-        
-        Lq, Lk, Lv = q_torch.shape[-1], k_torch.shape[-1], v_torch.shape[-1]
-        assert Lq == Lk and Lk == Lv, "Q, K, V must have the same last dimension"
-        assert Lk in {16, 32, 64, 128}, "Q, K, V last dimension must be one of 16, 32, 64, 128"
-        print("Output slice O[0, 0, :5]:", o_torch[0, 0, 0, :5])
-        print("L slice L[0, :5]:", L_torch[0, :5])
-
-        BLOCK_M = 64
-        BLOCK_N = 32
-        grid = (triton.cdiv(q.shape[2], BLOCK_M), q.shape[0] * q.shape[1], 1)
-   
-        num_warps = 4 if Lk <= 64 else 8
-        _fwd_kernel[grid](
-            q_torch, k_torch, v_torch, sm_scale,
-            L_torch,
-            o_torch,
-            q_torch.stride(0), q_torch.stride(1), q_torch.stride(2), q_torch.stride(3),
-            k_torch.stride(0), k_torch.stride(1), k_torch.stride(2), k_torch.stride(3),
-            v_torch.stride(0), v_torch.stride(1), v_torch.stride(2), v_torch.stride(3),
-            o_torch.stride(0), o_torch.stride(1), o_torch.stride(2), o_torch.stride(3),
-            q_torch.shape[0], q_torch.shape[1], q_torch.shape[2],
-            BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
-            IS_CAUSAL=causal,
-            num_warps=num_warps, # type: ignore
-            num_stages=4) # type: ignore
-        # print the slice of o and l
-        print("Output slice O[0, 0, :5]:", o_torch[0, 0, 0, :5])
-        print("L slice L[0, :5]:", L_torch[0, :5])
-        print("Q shape:", q_torch.shape, "K shape:", k_torch.shape, "V shape:", v_torch.shape)
-        return (o,L,grid, Lk)
-
-    @staticmethod
-    def backward(ctx, do):
-        BLOCK = 128
-        q, k, v, o, L = ctx.saved_tensors
-        do = do.contiguous()
-        dq = torch.zeros_like(q, dtype=torch.float32)
-        dk = torch.empty_like(k)
-        dv = torch.empty_like(v)
-        delta = torch.empty_like(L)
-        _bwd_preprocess[(ctx.grid[0] * ctx.grid[1], )](
-            o, do,
-            delta,
-            BLOCK_M=BLOCK, D_HEAD=ctx.BLOCK_DMODEL,
-        )
-        _bwd_kernel[(ctx.grid[1],)](
-            q, k, v, ctx.sm_scale,
-            o, do,
-            dq, dk, dv,
-            L, delta,
-            q.stride(0), q.stride(1), q.stride(2), q.stride(3),
-            k.stride(0), k.stride(1), k.stride(2), k.stride(3),
-            v.stride(0), v.stride(1), v.stride(2), v.stride(3),
-            q.shape[0], q.shape[1], q.shape[2],
-            ctx.grid[0],
-            BLOCK_M=BLOCK, BLOCK_N=BLOCK,
-            BLOCK_DMODEL=ctx.BLOCK_DMODEL, num_warps=8,
-            CAUSAL=ctx.causal,
-            num_stages=1,
-        )
-        return dq, dk, dv, None, None
+def attention(q, k, v, o, L, causal, sm_scale):
+    # print("Python: o address:", hex(o.ctypes.data))
+    # shape constraints
+    Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
+    # chang input from numpy to torch
+    # q_torch = torch.tensor(np.array(q, dtype=np.float32, copy=True), device='cuda')
+    # k_torch = torch.tensor(np.array(k, dtype=np.float32, copy=True), device='cuda')
+    # v_torch = torch.tensor(np.array(v, dtype=np.float32, copy=True), device='cuda')
+    # o_torch = torch.tensor(np.array(o, dtype=np.float32, copy=True), device='cuda')
+    # L_torch = torch.tensor(np.array(L, dtype=np.float32, copy=True), device='cuda')
+    q_torch = torch.from_numpy(np.array(q, dtype=np.float32 )).cuda()
+    k_torch = torch.from_numpy(np.array(k, dtype=np.float32 )).cuda()
+    v_torch = torch.from_numpy(np.array(v, dtype=np.float32)).cuda()
+    o_torch = torch.from_numpy(np.array(o, dtype=np.float32)).cuda()
+    L_torch = torch.from_numpy(np.array(L, dtype=np.float32)).cuda()
+  
+    Lq, Lk, Lv = q_torch.shape[-1], k_torch.shape[-1], v_torch.shape[-1]
+    assert Lq == Lk and Lk == Lv, "Q, K, V must have the same last dimension"
+    assert Lk in {16, 32, 64, 128}, "Q, K, V last dimension must be one of 16, 32, 64, 128"
 
 
-attention = _attention.apply
+    BLOCK_M = 64
+    BLOCK_N = 32
+    grid = (triton.cdiv(q.shape[2], BLOCK_M), q.shape[0] * q.shape[1], 1)
+
+    num_warps = 4 if Lk <= 64 else 8
+    _fwd_kernel[grid](
+        q_torch, k_torch, v_torch, sm_scale,
+        L_torch,
+        o_torch,
+        q_torch.stride(0), q_torch.stride(1), q_torch.stride(2), q_torch.stride(3),
+        k_torch.stride(0), k_torch.stride(1), k_torch.stride(2), k_torch.stride(3),
+        v_torch.stride(0), v_torch.stride(1), v_torch.stride(2), v_torch.stride(3),
+        o_torch.stride(0), o_torch.stride(1), o_torch.stride(2), o_torch.stride(3),
+        q_torch.shape[0], q_torch.shape[1], q_torch.shape[2],
+        BLOCK_M=BLOCK_M, BLOCK_N=BLOCK_N, BLOCK_DMODEL=Lk,
+        IS_CAUSAL=causal,
+        num_warps=num_warps, # type: ignore
+        num_stages=4) # type: ignore
+    # copy th cuda tensor back to the original numpy array
+    np.copyto(o, o_torch.cpu())  # ✅ 这会将 o_torch 数据拷贝回 py_o（指向 C++ 分配的内存）
+    np.copyto(L, L_torch.cpu())
+
+    # print("o address:", hex(o.ctypes.data))
+    return (o, L, grid, Lk)
+
+
+def backward(dq, dk, dv, do, q,k,v,o,L, grid0, grid1, grid2, BLOCK_DMODEL, causal, sm_scale):
+    print("Python Backward attntion with causal:", causal, "sm_scale:", sm_scale)
+    BLOCK = 32
+    # transform the numpy array to torch tensor
+    q_torch = torch.tensor(np.array(q, dtype=np.float32, copy=True), device='cuda')
+    k_torch = torch.tensor(np.array(k, dtype=np.float32, copy=True), device='cuda')
+    v_torch = torch.tensor(np.array(v, dtype=np.float32, copy=True), device='cuda')
+    o_torch = torch.tensor(np.array(o, dtype=np.float32, copy=True), device='cuda')
+    L_torch = torch.tensor(np.array(L, dtype=np.float32, copy=True), device='cuda')
+    
+    do_torch = torch.tensor(np.array(do, dtype=np.float32, copy=True), device='cuda')
+    dq_torch = torch.tensor(np.array(dq, dtype=np.float32, copy=True), device='cuda')
+    dk_torch = torch.tensor(np.array(dk, dtype=np.float32, copy=True), device='cuda')
+    dv_torch = torch.tensor(np.array(dv, dtype=np.float32, copy=True), device='cuda')
+
+    delta = torch.empty_like(L_torch)
+    _bwd_preprocess[(grid0 * grid1, )](
+        o_torch, do_torch,
+        delta,
+        BLOCK_M=BLOCK, D_HEAD=BLOCK_DMODEL,
+    )
+    _bwd_kernel[(grid1,)](
+        q_torch, k_torch, v_torch, sm_scale,
+        o_torch, do_torch,
+        dq_torch, dk_torch, dv_torch,
+        L_torch, delta,
+        q_torch.stride(0), q_torch.stride(1), q_torch.stride(2), q_torch.stride(3),
+        k_torch.stride(0), k_torch.stride(1), k_torch.stride(2), k_torch.stride(3),
+        v_torch.stride(0), v_torch.stride(1), v_torch.stride(2), v_torch.stride(3),
+        q_torch.shape[0], q_torch.shape[1], q_torch.shape[2],
+        grid0,
+        BLOCK_M=BLOCK, BLOCK_N=BLOCK,
+        BLOCK_DMODEL=BLOCK_DMODEL, num_warps=8,
+        CAUSAL=causal,
+        num_stages=1,
+    )
+    print("Python Backward done")
+    np.copyto(dq, dq_torch.cpu())
+    np.copyto(dk, dk_torch.cpu())
+    np.copyto(dv, dv_torch.cpu())
+    return dq, dk, dv, None, None
+
 
 if __name__ == "__main__":
     # Test the attention function use numpy arrays
